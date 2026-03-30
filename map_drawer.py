@@ -1,5 +1,7 @@
 import traci
 import pygame
+from drone import Drone
+from task import Task
 
 # 定义类型常量
 DRONE = 1
@@ -144,10 +146,14 @@ class PygameVisualizer:
                     screen_pos = self.world_to_screen(pos[0], pos[1])
                     self.screen.blit(self.drone_image, (screen_pos[0] - 10, screen_pos[1] - 10))
 
-                    self.draw_destination(vehicle_id)
+                    # self.draw_destination(vehicle_id)
             except:
                 continue
         
+        for drone in self.drones:
+            self.draw_next_task_destination(drone)
+
+
         # 显示统计信息
         font = pygame.font.Font(None, 36)
         text = font.render(f'Vehicles: {len(vehicle_ids)}', True, (0, 0, 0))
@@ -165,7 +171,30 @@ class PygameVisualizer:
         destination_pos = traci.lane.getShape(lane_id)[-1]
         destination_pos_screen = self.world_to_screen(destination_pos[0], destination_pos[1])
 
-        self.draw_dashed_line(self.screen, (255, 0, 0), current_pos_screen, destination_pos_screen, 2)
+        self.draw_dashed_line(self.screen, (255, 0, 0), destination_pos_screen, current_pos_screen, 2)
+
+    def draw_next_task_destination(self, drone: Drone):
+        if drone.is_free:
+            return  # 无任务时不绘制目的地
+        """绘制下一次任务的目的地"""
+        next_destination = drone.get_current_task_destination()
+        # print("Next destination:", next_destination)
+        if next_destination:
+            try:
+                lane_id = f"{next_destination}_0"
+                current_pos = drone.get_current_position()
+                current_pos_screen = self.world_to_screen(current_pos[0], current_pos[1])
+                next_pos = traci.lane.getShape(lane_id)[-1]
+                next_pos_screen = self.world_to_screen(next_pos[0], next_pos[1])
+                # print("Current pos:", current_pos_screen)
+                # print("Next pos:", next_pos_screen)
+                # 绘制到下一个任务目的地的虚线
+                width = 5
+                # pygame.draw.line(self.screen, (0, 255, 0), current_pos_screen, next_pos_screen, width)
+                self.draw_dashed_line(self.screen, (255, 0, 0), current_pos_screen, next_pos_screen, width)
+            except:
+                print("Error:", lane_id)
+                pass
 
 
     def draw_dashed_line(self, surface, color, start_pos, end_pos, width=1, dash_length=10):
@@ -189,14 +218,16 @@ class PygameVisualizer:
         while pos < distance:
             # 当前段长度（最后一段可能不足）
             seg_len = min(dl, distance - pos)
-            start_x = x1 + dx_unit * pos
-            start_y = y1 + dy_unit * pos
-            end_x = start_x + dx_unit * seg_len
-            end_y = start_y + dy_unit * seg_len
+            start_x = x2 - dx_unit * pos
+            start_y = y2 - dy_unit * pos
+            end_x = start_x - dx_unit * seg_len
+            end_y = start_y - dy_unit * seg_len
             pygame.draw.line(surface, color, (start_x, start_y), (end_x, end_y), width)
             pos += 2 * dl   # 跳过空白段
         
-    def render(self):
+
+    def render(self, drones:list[Drone]):
+        self.drones = drones
         # 控制帧率
         self.draw_vehicles()
         self.clock.tick(self.fps)
