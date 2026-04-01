@@ -227,6 +227,13 @@ class PygameVisualizer:
         
 
     def render(self, drones:list[Drone]):
+        # 防止ubuntu报错无响应
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                traci.close()
+                pygame.quit()
+                exit()
+
         self.drones = drones
         # 控制帧率
         self.draw_vehicles()
