@@ -1,278 +1,389 @@
-import traci
+import osmnx as ox
 import pygame
+import numpy as np
+from shapely.geometry import Point, LineString, Polygon, box
+from shapely.strtree import STRtree
+import math
+from collections import defaultdict
 from drone import Drone
-from task import Task
+from tools.osm import load_map_data
 
-# 定义类型常量
-DRONE = 1
-WAREHOUSE = 2
-CHARGER = 3
-
-WAREHOUSE_POS = (1120, 1000)
-CHARGER_POS = (1127, 1449)
-
-class PygameVisualizer:
-    def __init__(self, width=1200, height=800, fps=30):
-        # self.sumo_cfg_path = sumo_cfg_path
-        self.width = width
-        self.height = height
-        self.fps = fps
-
-        # 初始化pygame
+class OptimizedMapViewer:
+    """优化的地图查看器，使用空间索引提高性能"""
+    
+    def __init__(self, osm_file_path, screen_size=(1200, 800)):
         pygame.init()
-        self.screen = pygame.display.set_mode((width, height))
-        pygame.display.set_caption("SUMO Traffic Simulation")
         self.clock = pygame.time.Clock()
+        self.screen_size = screen_size
+        self.screen = pygame.display.set_mode(screen_size)
+        pygame.display.set_caption("OSM Map Viewer - Optimized")
         
-        # 坐标转换参数（SUMO坐标 -> 屏幕坐标）
-        self.world_min_x = float('inf')
-        self.world_max_x = float('-inf')
-        self.world_min_y = float('inf')
-        self.world_max_y = float('-inf')
-        self.scale_x = 1
-        self.scale_y = 1
-        self.offset_x = 0
-        self.offset_y = 0
+        # 颜色方案
+        self.COLORS = {
+            'BACKGROUND': (255, 255, 255),
+            'ROAD_HIGHWAY': (80, 80, 100),
+            'ROAD_RESIDENTIAL': (60, 60, 80),
+            'ROAD_PRIMARY': (100, 100, 120),
+            'BUILDING': (150, 150, 200),
+            'BUILDING_HOVER': (80, 80, 100),
+            'WATER': (40, 60, 80),
+            'GREEN': (40, 70, 40),
+            'TEXT': (255, 255, 255),
+            'SELECTION': (100, 150, 200, 128),
+        }
         
-        # 缓存
-        self.road_surfaces = {}  # 预渲染的道路表面
-        self.vehicle_colors = {}
+        # 视图控制
+        self.zoom = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.dragging = False
+        self.drag_start = (0, 0)
 
-        self.draw_roads()
-
-
-        self.drone_image = pygame.image.load("assets/drone.png")
-        self.drone_image = pygame.transform.scale(self.drone_image, (20, 20))
-        self.warehouse_image = pygame.image.load("assets/warehouse.jpeg")
-        self.warehouse_image = pygame.transform.scale(self.warehouse_image, (40, 40))
-        self.charger_image = pygame.image.load("assets/charger.jpeg")
-        self.charger_image = pygame.transform.scale(self.charger_image, (40, 40))
-
-        warehouse_pos_screen = self.world_to_screen(WAREHOUSE_POS[0], WAREHOUSE_POS[1])
-        self.background.blit(self.warehouse_image, (warehouse_pos_screen[0] - 20, warehouse_pos_screen[1] - 20))
-
-        charger_pos_screen = self.world_to_screen(CHARGER_POS[0], CHARGER_POS[1])
-        self.background.blit(self.charger_image, (charger_pos_screen[0] - 20, charger_pos_screen[1] - 20))
-
+        self.fps_counter = 0
+        self.fps_time = 0
+        self.current_fps = 0
         
-    def calculate_transform(self):
-        """计算坐标转换参数"""
-        # 获取世界坐标范围
-        edge_ids = traci.edge.getIDList()
-        for edge_id in edge_ids:
-            try:
-                num_lanes = traci.edge.getLaneNumber(edge_id)
-                for i in range(num_lanes):
-                    lane_id = f"{edge_id}_{i}"
-                    shape = traci.lane.getShape(lane_id)
-                    for x, y in shape:
-                        self.world_min_x = min(self.world_min_x, x)
-                        self.world_max_x = max(self.world_max_x, x)
-                        self.world_min_y = min(self.world_min_y, y)
-                        self.world_max_y = max(self.world_max_y, y)
-            except:
-                pass
+        # 加载数据
+        # self.load_map_data(osm_file_path)
+        self.roads_by_type, self.buildings_with_height = load_map_data(osm_file_path)
+        # print(f"buildings_with_height: {self.buildings_with_height[0]}")
         
+        # 构建空间索引
+        self.build_spatial_index()
+        
+        # 计算边界
+        self.calculate_bounds()
 
-        # 计算世界坐标尺寸
-        world_width = self.world_max_x - self.world_min_x
-        world_height = self.world_max_y - self.world_min_y
+        self.scale = min(self.screen_size[0] / self.map_width, self.screen_size[1] / self.map_height)
         
-        # 计算缩放比例（取较小的比例以保持长宽比）
-        scale_x = self.width / world_width
-        scale_y = self.height / world_height
-        self.scale = min(scale_x, scale_y)  # 使用相同的缩放比例
+        # 交互状态
+        self.hovered_building = None
+        self.selected_building = None
         
-        # 计算偏移量，使地图居中显示
-        scaled_world_width = world_width * self.scale
-        scaled_world_height = world_height * self.scale
+        self.font = pygame.font.Font(None, 20)
+        self.small_font = pygame.font.Font(None, 16)
+       
+    def build_spatial_index(self):
+        """构建空间索引以加速查询"""
+        self.building_geoms = [b['geometry'] for b in self.buildings_with_height]
+        if self.building_geoms:
+            self.building_index = STRtree(self.building_geoms)
+    
+    def calculate_bounds(self):
+        """计算边界"""
+        all_geoms = []
         
-        self.offset_x = (self.width - scaled_world_width) / 2 - self.world_min_x * self.scale
-        self.offset_y = (self.height - scaled_world_height) / 2 - self.world_min_y * self.scale
-
+        for roads in self.roads_by_type.values():
+            all_geoms.extend(roads)
+        
+        all_geoms.extend(self.building_geoms)
+        
+        if all_geoms:
+            bounds = all_geoms[0].bounds
+            min_x, min_y, max_x, max_y = bounds
+            
+            for geom in all_geoms[1:]:
+                b = geom.bounds
+                min_x = min(min_x, b[0])
+                min_y = min(min_y, b[1])
+                max_x = max(max_x, b[2])
+                max_y = max(max_y, b[3])
+            
+            self.min_x, self.min_y, self.max_x, self.max_y = min_x, min_y, max_x, max_y
+        else:
+            self.min_x, self.min_y, self.max_x, self.max_y = -180, -90, 180, 90
+        
+        self.map_width = self.max_x - self.min_x
+        self.map_height = self.max_y - self.min_y
+    
     def world_to_screen(self, x, y):
-        """世界坐标转屏幕坐标（使用统一缩放比例）"""
-        screen_x = x * self.scale + self.offset_x
-        screen_y = self.height - y * self.scale - self.offset_y
+        """坐标转换"""
+        # 使用统一的缩放比例
+        screen_x = (x - self.min_x) * self.scale * self.zoom
+        screen_y = (self.max_y - y) * self.scale * self.zoom
+        screen_x += self.pan_x
+        screen_y += self.pan_y
         return int(screen_x), int(screen_y)
-    def draw_roads(self):
-        """绘制所有道路（预渲染）"""
-        self.calculate_transform()
-        
-        # 创建背景表面
-        background = pygame.Surface((self.width, self.height))
-        background.fill((255, 255, 255))  # 白色背景
-        
-        # 绘制道路
-        edge_ids = traci.edge.getIDList()
-        for edge_id in edge_ids:
-            try:
-                num_lanes = traci.edge.getLaneNumber(edge_id)
-                for i in range(num_lanes):
-                    lane_id = f"{edge_id}_{i}"
-                    shape = traci.lane.getShape(lane_id)
-                    
-                    if len(shape) >= 2:
-                        # 转换坐标
-                        points = [self.world_to_screen(x, y) for x, y in shape]
-                        if len(points) >= 2:
-                            # 根据车道数设置不同颜色
-                            if num_lanes == 1:
-                                color = (100, 100, 100)
-                            elif i == 0:
-                                color = (150, 150, 150)
-                            else:
-                                color = (0, 0, 0)
-                            
-                            pygame.draw.lines(background, color, False, points, 
-                                            width=3 if num_lanes == 1 else 2)
-            except:
-                pass
-        
-        self.background = background
-        
-    def draw_vehicles(self):
-        """绘制车辆"""
-        # 复制背景
-        self.screen.blit(self.background, (0, 0))
-        
-        # 获取所有车辆
-        vehicle_ids = traci.vehicle.getIDList()
-        
-        for vehicle_id in vehicle_ids:
-            try:
-                pos = traci.vehicle.getPosition(vehicle_id)
-                if pos:
-                    screen_pos = self.world_to_screen(pos[0], pos[1])
-                    self.screen.blit(self.drone_image, (screen_pos[0] - 10, screen_pos[1] - 10))
 
-                    # self.draw_destination(vehicle_id)
-            except:
-                continue
-        
-        for drone in self.drones:
-            self.draw_next_task_destination(drone)
+    def get_visible_bounds(self):
+        """获取当前可见区域的边界"""
+        top_left = self.screen_to_world(0, 0)
+        bottom_right = self.screen_to_world(self.screen_size[0], self.screen_size[1])
+        return (top_left[0], bottom_right[1], bottom_right[0], top_left[1])
 
-
-        # 显示统计信息
-        font = pygame.font.Font(None, 36)
-        text = font.render(f'Vehicles: {len(vehicle_ids)}', True, (0, 0, 0))
-        self.screen.blit(text, (10, 10))
-        
-        pygame.display.flip()
-
-    def draw_destination(self, veh_id):
-        """绘制目的地"""
-        current_pos = traci.vehicle.getPosition(veh_id)
-        current_pos_screen = self.world_to_screen(current_pos[0], current_pos[1])
-
-        destination_route = traci.vehicle.getRoute(veh_id)[-1]
-        lane_id = f"{destination_route}_0"
-        destination_pos = traci.lane.getShape(lane_id)[-1]
-        destination_pos_screen = self.world_to_screen(destination_pos[0], destination_pos[1])
-
-        self.draw_dashed_line(self.screen, (255, 0, 0), destination_pos_screen, current_pos_screen, 2)
-
-    def draw_next_task_destination(self, drone: Drone):
-        if drone.is_free:
-            return  # 无任务时不绘制目的地
-        """绘制下一次任务的目的地"""
-        next_destination = drone.get_current_task_destination()
-        # print("Next destination:", next_destination)
-        if next_destination:
-            try:
-                lane_id = f"{next_destination}_0"
-                current_pos = drone.get_current_position()
-                current_pos_screen = self.world_to_screen(current_pos[0], current_pos[1])
-                next_pos = traci.lane.getShape(lane_id)[-1]
-                next_pos_screen = self.world_to_screen(next_pos[0], next_pos[1])
-                # print("Current pos:", current_pos_screen)
-                # print("Next pos:", next_pos_screen)
-                # 绘制到下一个任务目的地的虚线
-                width = 5
-                # pygame.draw.line(self.screen, (0, 255, 0), current_pos_screen, next_pos_screen, width)
-                self.draw_dashed_line(self.screen, (255, 0, 0), current_pos_screen, next_pos_screen, width)
-            except:
-                print("Error:", lane_id)
-                pass
-
-
-    def draw_dashed_line(self, surface, color, start_pos, end_pos, width=1, dash_length=10):
-        """绘制虚线（修正版）"""
-        x1, y1 = start_pos
-        x2, y2 = end_pos
-        dl = dash_length
-
-        dx = x2 - x1
-        dy = y2 - y1
-        distance = (dx*dx + dy*dy) ** 0.5
-        if distance == 0:
+    def screen_to_world(self, screen_x, screen_y):
+        """屏幕坐标转世界坐标"""
+        # 使用统一的缩放比例
+        unified_scale = min(self.screen_size[0], self.screen_size[1])
+        world_x = (screen_x - self.pan_x) / self.zoom / self.scale  + self.min_x
+        world_y = self.max_y - (screen_y - self.pan_y) / self.zoom / self.scale 
+        return world_x, world_y
+    
+    def draw_road(self, road, road_type):
+        """绘制道路"""
+        if len(road.coords) < 2:
             return
-
-        # 单位方向向量
-        dx_unit = dx / distance
-        dy_unit = dy / distance
-
-        # 浮点循环，步长为 2*dash_length
-        pos = 0.0
-        while pos < distance:
-            # 当前段长度（最后一段可能不足）
-            seg_len = min(dl, distance - pos)
-            start_x = x2 - dx_unit * pos
-            start_y = y2 - dy_unit * pos
-            end_x = start_x - dx_unit * seg_len
-            end_y = start_y - dy_unit * seg_len
-            pygame.draw.line(surface, color, (start_x, start_y), (end_x, end_y), width)
-            pos += 2 * dl   # 跳过空白段
         
-
-    def render(self, drones:list[Drone]):
-        # 防止ubuntu报错无响应
+        screen_points = []
+        for coord in road.coords:
+            screen_point = self.world_to_screen(coord[0], coord[1])
+            screen_points.append(screen_point)
+        
+        # 根据道路类型设置样式
+        if 'motorway' in road_type or 'primary' in road_type:
+            color = self.COLORS['ROAD_PRIMARY']
+            width = max(2, int(3 * self.zoom))
+        elif 'residential' in road_type or 'living' in road_type:
+            color = self.COLORS['ROAD_RESIDENTIAL']
+            width = max(1, int(2 * self.zoom))
+        else:
+            color = self.COLORS['ROAD_HIGHWAY']
+            width = max(1, int(1.5 * self.zoom))
+        
+        if len(screen_points) > 1:
+            pygame.draw.lines(self.screen, color, False, screen_points, width)
+    
+    def draw_building(self, building_data, is_hovered=False, is_selected=False):
+        """绘制建筑"""
+        geom = building_data['geometry']
+        
+        if hasattr(geom, 'exterior'):
+            screen_points = []
+            for coord in geom.exterior.coords:
+                screen_point = self.world_to_screen(coord[0], coord[1])
+                screen_points.append(screen_point)
+            
+            if len(screen_points) > 2:
+                # 根据状态选择颜色
+                if is_selected:
+                    color = (150, 200, 100)
+                elif is_hovered:
+                    color = self.COLORS['BUILDING_HOVER']
+                else:
+                    # 根据高度设置颜色
+                    if building_data['height'] and building_data['height'] > 20:
+                        color = (255, 0, 0)  # 红色 - 高建筑物
+                    else:
+                        color = self.COLORS['BUILDING']
+                
+                pygame.draw.polygon(self.screen, color, screen_points)
+                pygame.draw.polygon(self.screen, (100, 100, 120), screen_points, 1)
+                
+    
+    def find_hovered_building(self, mouse_pos):
+        """查找鼠标悬停的建筑"""
+        world_x, world_y = self.screen_to_world(mouse_pos[0], mouse_pos[1])
+        point = Point(world_x, world_y)
+        
+        if self.building_geoms:
+            # 使用空间索引查找
+            indices = self.building_index.query(point)
+            for idx in indices:
+                if self.building_geoms[idx].contains(point):
+                    return idx
+        return None
+    
+    def draw_info_panel(self):
+        """绘制信息面板"""
+        info_lines = [
+            f"Zoom: {self.zoom:.2f}x",
+            f"Buildings: {len(self.buildings_with_height)}",
+            f"With height: {sum(1 for b in self.buildings_with_height if b['height'])}",
+            f"FPS: {self.current_fps}",
+            "",
+            "Controls:",
+            "  Drag - Pan",
+            "  Scroll - Zoom",
+            "  Click - Select building",
+            "  R - Reset"
+        ]
+        
+        if self.selected_building is not None:
+            building = self.buildings_with_height[self.selected_building]
+            info_lines.extend([
+                "",
+                "Selected Building:",
+                f"  Height: {building['height'] or 'Unknown'}m"
+            ])
+            
+            # 添加更多标签信息
+            tags = building['tags']
+            if 'name' in tags:
+                info_lines.append(f"  Name: {tags['name']}")
+            if 'building' in tags:
+                info_lines.append(f"  Type: {tags['building']}")
+        
+        panel_x = 10
+        panel_y = 10
+        
+        # 绘制半透明背景
+        max_width = 0
+        for line in info_lines:
+            text_surface = self.font.render(line, True, self.COLORS['TEXT'])
+            max_width = max(max_width, text_surface.get_width())
+        
+        pygame.draw.rect(self.screen, (0, 0, 0, 200), 
+                        (panel_x - 5, panel_y - 5, max_width + 10, len(info_lines) * 25 + 10))
+        
+        for i, line in enumerate(info_lines):
+            text_surface = self.font.render(line, True, self.COLORS['TEXT'])
+            self.screen.blit(text_surface, (panel_x, panel_y + i * 25))
+    
+    def handle_events(self):
+        """处理事件"""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                traci.close()
-                pygame.quit()
-                exit()
-
-        self.drones = drones
-        # 控制帧率
-        self.draw_vehicles()
-        self.clock.tick(self.fps)
-
-    def run(self, steps=1000, fps=30):
-        """运行仿真"""
-        traci.start(["sumo-gui", "-c", self.sumo_cfg_path])
-        traci.simulationStep()
+                return False
+            
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # 左键
+                    # 检查是否点击了建筑
+                    hover_idx = self.find_hovered_building(event.pos)
+                    if hover_idx is not None:
+                        self.selected_building = hover_idx
+                    else:
+                        # 开始拖动
+                        self.dragging = True
+                        self.drag_start = event.pos
+                elif event.button == 4:  # 放大
+                    # 以鼠标位置为中心缩放
+                    mouse_world = self.screen_to_world(event.pos[0], event.pos[1])
+                    self.zoom *= 1.1
+                    self.zoom = min(self.zoom, 10.0)
+                    # 调整平移使鼠标位置保持不变
+                    new_mouse_screen = self.world_to_screen(mouse_world[0], mouse_world[1])
+                    self.pan_x += event.pos[0] - new_mouse_screen[0]
+                    self.pan_y += event.pos[1] - new_mouse_screen[1]
+                elif event.button == 5:  # 缩小
+                    mouse_world = self.screen_to_world(event.pos[0], event.pos[1])
+                    self.zoom /= 1.1
+                    self.zoom = max(self.zoom, 0.05)
+                    new_mouse_screen = self.world_to_screen(mouse_world[0], mouse_world[1])
+                    self.pan_x += event.pos[0] - new_mouse_screen[0]
+                    self.pan_y += event.pos[1] - new_mouse_screen[1]
+            
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    self.dragging = False
+            
+            elif event.type == pygame.MOUSEMOTION:
+                if self.dragging:
+                    dx = event.pos[0] - self.drag_start[0]
+                    dy = event.pos[1] - self.drag_start[1]
+                    self.pan_x += dx
+                    self.pan_y += dy
+                    self.drag_start = event.pos
+                else:
+                    # 更新悬停的建筑
+                    hover_idx = self.find_hovered_building(event.pos)
+                    self.hovered_building = hover_idx
+            
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    self.zoom = 1.0
+                    self.pan_x = 0
+                    self.pan_y = 0
+                    self.selected_building = None
         
-        # 预渲染道路
-        self.draw_roads()
+        return True
+    
+    def draw(self, drones=[]):
+        """主绘制函数"""
+        self.screen.fill(self.COLORS['BACKGROUND'])
         
+            
+
+        # 获取可见区域
+        visible_bounds = self.get_visible_bounds()
+        
+        # 绘制道路（简化：绘制所有，因为道路通常不多）
+        for road_type, roads in self.roads_by_type.items():
+            for road in roads:
+                # 简单的视锥剔除
+                if road.bounds[2] >= visible_bounds[0] and road.bounds[0] <= visible_bounds[2] and \
+                   road.bounds[3] >= visible_bounds[1] and road.bounds[1] <= visible_bounds[3]:
+                    self.draw_road(road, road_type)
+        
+        # 绘制建筑
+        for idx, building in enumerate(self.buildings_with_height):
+            geom = building['geometry']
+            # 视锥剔除
+            if geom.bounds[2] >= visible_bounds[0] and geom.bounds[0] <= visible_bounds[2] and \
+               geom.bounds[3] >= visible_bounds[1] and geom.bounds[1] <= visible_bounds[3]:
+                is_hovered = (self.hovered_building == idx)
+                is_selected = (self.selected_building == idx)
+                self.draw_building(building, is_hovered, is_selected)
+
+        
+        for drone in drones:
+            if drone.is_free == False:
+                x, y = drone.get_position()
+                screen_pos = self.world_to_screen(x, y)
+                pygame.draw.circle(self.screen, (0, 0, 255), screen_pos, max(5, int(3 * self.zoom)))
+                print("Drone position: ({}, {})".format(x, y))
+
+                # Draw the route to the next target points if available
+                if drone.scheduled_position:  # Check if there are scheduled positions
+                    route_points = [screen_pos]  # Start from current drone position
+                    
+                    # Add the next target positions to the route
+                    for target_pos in drone.scheduled_position:
+                        target_screen_pos = self.world_to_screen(target_pos[0], target_pos[1])
+                        route_points.append(target_screen_pos)
+                    
+                    # Draw the route line
+                    if len(route_points) > 1:
+                        pygame.draw.lines(self.screen, (100, 100, 255), False, route_points, 2)  # Light blue route line
+                        
+                        # Optionally, highlight the next target point
+                        if len(drone.scheduled_position) > 0:
+                            next_target = drone.scheduled_position[0]
+                            next_target_screen = self.world_to_screen(next_target[0], next_target[1])
+                            pygame.draw.circle(self.screen, (255, 255, 0), next_target_screen, max(3, int(2 * self.zoom)))  # Yellow circle for next target
+        
+        # 绘制UI
+        self.draw_info_panel()
+        
+        pygame.display.flip()
+    
+    def render(self, drones):
+        running = self.handle_events()
+        self.draw(drones)
+
+        # FPS calculation
+        current_time = pygame.time.get_ticks()
+        self.fps_counter += 1
+        
+        if current_time - self.fps_time > 1000:  # Update every second
+            self.current_fps = self.fps_counter
+            self.fps_counter = 0
+            self.fps_time = current_time
+            print(f"FPS: {self.current_fps}")
+        
+        self.clock.tick(60)
+
+
+    def run(self):
+        """主循环"""
+        # clock = pygame.time.Clock()
         running = True
-        step = 0
         
-        while running and step < steps:
-            # 处理事件
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        running = False
-            
-            # 执行仿真步
-            traci.simulationStep()
-            
-            # 绘制车辆
-            self.draw_vehicles()
-            
-            # 控制帧率
-            self.clock.tick(fps)
-            step += 1
+        while running:
+            running = self.handle_events()
+            self.draw()
+            self.clock.tick(60)
         
-        traci.close()
         pygame.quit()
 
-# 使用
+# 使用示例
 if __name__ == "__main__":
-    viz = PygameVisualizer("data/siping/siping.sumocfg")
-    viz.run(steps=1000, fps=30)
+    osm_file_path = "data/map/map.osm"
+    
+    try:
+        pygame.init()
+        viewer = OptimizedMapViewer(osm_file_path)
+        viewer.run()
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
