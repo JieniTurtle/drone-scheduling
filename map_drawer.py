@@ -46,6 +46,7 @@ class OptimizedMapViewer:
         # 加载数据
         # self.load_map_data(osm_file_path)
         self.roads_by_type, self.buildings_with_height = load_map_data(osm_file_path)
+        
         # print(f"buildings_with_height: {self.buildings_with_height[0]}")
         
         # 构建空间索引

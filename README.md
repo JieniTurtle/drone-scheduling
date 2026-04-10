@@ -1,6 +1,15 @@
 # 环境安装
 ## 操作系统
 Ubuntu 22.04
+## Python配置
+```
+pip install osmnx==1.9.4
+pip install pygame==2.6.1
+# 或者不需要管版本，直接安装就行，这两版本之间差异应该不大
+```
+<!-- 
+这是使用sumo的方式，在第六周暂时弃用
+
 ## SUMO
 ```sudo apt install sumo```
 安装完成后，输入sumo应该输出
@@ -17,4 +26,4 @@ Eclipse SUMO sumo Version 1.12.0
 ```
 pygame==2.6.1
 traci==1.20.0
-```
+``` -->

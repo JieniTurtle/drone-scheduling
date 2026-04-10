@@ -22,11 +22,22 @@ def load_map_data(osm_file_path):
     
     # 提取道路并分类
     roads_by_type = defaultdict(list)
+    major_road_types = {
+        'motorway', 'motorway_link',
+        'trunk', 'trunk_link',
+        'primary', 'primary_link',
+        'secondary', 'secondary_link',
+        'tertiary', 'tertiary_link'
+    }
     for u, v, data in graph.edges(data=True):
         road_type = data.get('highway', 'residential')
         
         if isinstance(road_type, list):  # 修复：处理可能的列表类型
             road_type = road_type[0] if road_type else 'residential'
+
+        # 只保留主干道路，过滤掉小型道路（如 residential、service、footway 等）
+        if road_type not in major_road_types:
+            continue
         
         if 'geometry' in data:
             geom = data['geometry']
