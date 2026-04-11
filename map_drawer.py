@@ -47,7 +47,7 @@ class OptimizedMapViewer:
         # self.load_map_data(osm_file_path)
         self.roads_by_type, self.buildings_with_height = load_map_data(osm_file_path)
         
-        # print(f"buildings_with_height: {self.buildings_with_height[0]}")
+        print(f"buildings_with_height: {self.buildings_with_height[0]}")
         
         # 构建空间索引
         self.build_spatial_index()
@@ -96,6 +96,8 @@ class OptimizedMapViewer:
         
         self.map_width = self.max_x - self.min_x
         self.map_height = self.max_y - self.min_y
+
+        print(f"Map bounds: ({self.min_x}, {self.min_y}) to ({self.max_x}, {self.max_y}), size: ({self.map_width}, {self.map_height})")
     
     def world_to_screen(self, x, y):
         """坐标转换"""
@@ -206,11 +208,21 @@ class OptimizedMapViewer:
                 "Selected Building:",
                 f"  Height: {building['height'] or 'Unknown'}m"
             ])
+
+            if 'id' in building and building['id'] is not None:
+                info_lines.append(f"  ID: {building['id']}")
             
             # 添加更多标签信息
             tags = building['tags']
             if 'name' in tags:
                 info_lines.append(f"  Name: {tags['name']}")
+            building_id = None
+            for id_field in ('osmid', 'id', 'building:id'):
+                if id_field in tags:
+                    building_id = tags[id_field]
+                    break
+            if building_id is not None:
+                info_lines.append(f"  ID: {building_id}")
             if 'building' in tags:
                 info_lines.append(f"  Type: {tags['building']}")
         
@@ -238,6 +250,10 @@ class OptimizedMapViewer:
             
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左键
+                    # 记录左键点击在地图上的坐标并追加保存到文件
+                    world_pos = self.screen_to_world(event.pos[0], event.pos[1])
+                    self.save_click_position(world_pos)
+
                     # 检查是否点击了建筑
                     hover_idx = self.find_hovered_building(event.pos)
                     if hover_idx is not None:
@@ -287,6 +303,14 @@ class OptimizedMapViewer:
                     self.selected_building = None
         
         return True
+
+    def save_click_position(self, world_pos):
+        """将地图坐标追加写入文件。"""
+        try:
+            with open('clicked_positions.txt', 'a', encoding='utf-8') as f:
+                f.write(f"{world_pos[0]:.6f},{world_pos[1]:.6f}\n")
+        except Exception as e:
+            print(f"Failed to save click position: {e}")
     
     def draw(self, drones=[]):
         """主绘制函数"""

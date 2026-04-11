@@ -6,16 +6,24 @@ import math
 from drone import Drone
 from task import Task
 # from test import OptimizedMapViewer
-from tools.osm import load_map_data, get_building_location_by_name
+from tools.osm import load_map_data, get_building_location_by_name, get_global_bounds
 
 class Environment:
     def __init__(self, osm_file_path):
         _, buildings_with_height = load_map_data(osm_file_path)
+
+        self.global_bounds = get_global_bounds(buildings_with_height)
+
         self.high_buildings = [b for b in buildings_with_height if b['height'] is not None and b['height'] > 20]
 
         print(get_building_location_by_name( self.high_buildings, "衷和楼"))
         print(f"加载了 {len(self.high_buildings)} 个具有高度信息的建筑物")
 
+    def get_global_bounds(self):
+        return self.global_bounds
+    
+    def get_high_buildings(self):
+        return self.high_buildings
 
     def update(self):
         for drone in self.drones:
