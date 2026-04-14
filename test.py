@@ -33,14 +33,11 @@ if __name__ == "__main__":
         if unassigned_tasks:
             assigned = GreedyScheduler.schedule_for_drone(drone, unassigned_tasks)
             if assigned:
-                # 构建无人机的完整路线：当前位置 -> 任务1起始点 -> 任务1终点 -> 任务2起始点 -> 任务2终点 -> ...
-                route = [drone.get_position()]
                 for task in assigned:
                     print(f"Drone {drone.drone_id} assigned: {task}")
                     drone.add_load(task.weight)
-                    # 添加任务的起始点和终点到路线
-                    route.append(task.get_source())
-                    route.append(task.get_destination())
+                # 使用绕行路径规划
+                route = env.plan_route_for_tasks(drone, assigned)
                 drone.schedule_route(route)
 
     viewer = OptimizedMapViewer('data/map/part_of_yangpu.osm')
@@ -67,13 +64,11 @@ if __name__ == "__main__":
                     # 分配新任务
                     assigned = GreedyScheduler.schedule_for_drone(drone, unassigned_tasks)
                     if assigned:
-                        # 构建无人机的完整路线
-                        route = [drone.get_position()]
                         for task in assigned:
                             print(f"Drone {drone.drone_id} assigned: {task}")
                             drone.add_load(task.weight)
-                            route.append(task.get_source())
-                            route.append(task.get_destination())
+                        # 使用绕行路径规划
+                        route = env.plan_route_for_tasks(drone, assigned)
                         drone.schedule_route(route)
         
         viewer.render(env.drones)

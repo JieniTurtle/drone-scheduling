@@ -40,8 +40,12 @@ class Drone:
         v = 200  # 速度，值越大移动越快
         max_distance = v * time_step
         if self.scheduled_position:
-            # Get the next target position
-            target_x, target_y = self.scheduled_position[0]
+            # Get the next target position (支持新旧两种格式)
+            target = self.scheduled_position[0]
+            if len(target) >= 3:
+                target_x, target_y, _ = target  # 新格式: (x, y, type)
+            else:
+                target_x, target_y = target  # 旧格式: (x, y)
             
             # Calculate direction vector
             dx = target_x - self.x

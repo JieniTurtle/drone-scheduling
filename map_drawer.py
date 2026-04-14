@@ -32,6 +32,24 @@ class OptimizedMapViewer:
             'SELECTION': (100, 150, 200, 128),
         }
         
+        # 无人机颜色配置
+        self.DRONE_COLORS = [
+            (255, 80, 80),    # 红色
+            (80, 80, 255),    # 蓝色
+            (80, 200, 80),    # 绿色
+            (255, 165, 0),    # 橙色
+            (138, 43, 226),   # 紫色
+            (0, 206, 209),    # 深青色
+            (255, 105, 180),  # 粉红色
+            (255, 215, 0),    # 金色
+        ]
+        
+        # 特殊点颜色
+        self.TASK_SOURCE_COLOR = (255, 255, 100)    # 任务起点 - 黄色方块
+        self.TASK_DEST_COLOR = (255, 100, 255)     # 任务终点 - 粉色菱形
+        self.WAYPOINT_COLOR = (100, 200, 255)      # 绕飞转弯点 - 天蓝色三角
+        self.NEXT_TARGET_COLOR = (255, 255, 255)   # 下一个目标 - 白色大圆
+        
         # 视图控制
         self.zoom = 1.0
         self.pan_x = 0
@@ -186,7 +204,7 @@ class OptimizedMapViewer:
                     return idx
         return None
     
-    def draw_info_panel(self):
+    def draw_info_panel(self, drones=[]):
         """绘制信息面板"""
         info_lines = [
             f"Zoom: {self.zoom:.2f}x",
@@ -194,12 +212,25 @@ class OptimizedMapViewer:
             f"With height: {sum(1 for b in self.buildings_with_height if b['height'])}",
             f"FPS: {self.current_fps}",
             "",
+            "Drone Status:",
+        ]
+        
+        # 添加无人机状态
+        for drone in drones:
+            drone_idx = int(drone.drone_id.split('_')[1]) if '_' in drone.drone_id else 0
+            drone_color = self.DRONE_COLORS[drone_idx % len(self.DRONE_COLORS)]
+            color_name = f"#{drone_color[0]:02X}{drone_color[1]:02X}{drone_color[2]:02X}"
+            status = "IDLE" if drone.is_free else f"BUSY ({len(drone.scheduled_position)} pts)"
+            info_lines.append(f"  {drone.drone_id}: {status}")
+        
+        info_lines.extend([
+            "",
             "Controls:",
             "  Drag - Pan",
             "  Scroll - Zoom",
-            "  Click - Select building",
+            "  Click - Select",
             "  R - Reset"
-        ]
+        ])
         
         if self.selected_building is not None:
             building = self.buildings_with_height[self.selected_building]
@@ -212,19 +243,9 @@ class OptimizedMapViewer:
             if 'id' in building and building['id'] is not None:
                 info_lines.append(f"  ID: {building['id']}")
             
-            # 添加更多标签信息
             tags = building['tags']
             if 'name' in tags:
                 info_lines.append(f"  Name: {tags['name']}")
-            building_id = None
-            for id_field in ('osmid', 'id', 'building:id'):
-                if id_field in tags:
-                    building_id = tags[id_field]
-                    break
-            if building_id is not None:
-                info_lines.append(f"  ID: {building_id}")
-            if 'building' in tags:
-                info_lines.append(f"  Type: {tags['building']}")
         
         panel_x = 10
         panel_y = 10
@@ -236,11 +257,11 @@ class OptimizedMapViewer:
             max_width = max(max_width, text_surface.get_width())
         
         pygame.draw.rect(self.screen, (0, 0, 0, 200), 
-                        (panel_x - 5, panel_y - 5, max_width + 10, len(info_lines) * 25 + 10))
+                        (panel_x - 5, panel_y - 5, max_width + 10, len(info_lines) * 22 + 10))
         
         for i, line in enumerate(info_lines):
             text_surface = self.font.render(line, True, self.COLORS['TEXT'])
-            self.screen.blit(text_surface, (panel_x, panel_y + i * 25))
+            self.screen.blit(text_surface, (panel_x, panel_y + i * 22))
     
     def handle_events(self):
         """处理事件"""
@@ -315,16 +336,13 @@ class OptimizedMapViewer:
     def draw(self, drones=[]):
         """主绘制函数"""
         self.screen.fill(self.COLORS['BACKGROUND'])
-        
-            
 
         # 获取可见区域
         visible_bounds = self.get_visible_bounds()
         
-        # 绘制道路（简化：绘制所有，因为道路通常不多）
+        # 绘制道路
         for road_type, roads in self.roads_by_type.items():
             for road in roads:
-                # 简单的视锥剔除
                 if road.bounds[2] >= visible_bounds[0] and road.bounds[0] <= visible_bounds[2] and \
                    road.bounds[3] >= visible_bounds[1] and road.bounds[1] <= visible_bounds[3]:
                     self.draw_road(road, road_type)
@@ -332,48 +350,194 @@ class OptimizedMapViewer:
         # 绘制建筑
         for idx, building in enumerate(self.buildings_with_height):
             geom = building['geometry']
-            # 视锥剔除
             if geom.bounds[2] >= visible_bounds[0] and geom.bounds[0] <= visible_bounds[2] and \
                geom.bounds[3] >= visible_bounds[1] and geom.bounds[1] <= visible_bounds[3]:
                 is_hovered = (self.hovered_building == idx)
                 is_selected = (self.selected_building == idx)
                 self.draw_building(building, is_hovered, is_selected)
 
-        
+        # 绘制所有无人机的路线（先画路线，再画无人机）
         for drone in drones:
-            # 始终绘制无人机位置
-            x, y = drone.get_position()
-            screen_pos = self.world_to_screen(x, y)
-            # 空闲时用绿色，正在执行任务时用蓝色
-            color = (0, 255, 0) if drone.is_free else (0, 0, 255)
-            pygame.draw.circle(self.screen, color, screen_pos, max(5, int(3 * self.zoom)))
-            # 绘制无人机ID
-            id_text = self.small_font.render(drone.drone_id, True, color)
-            self.screen.blit(id_text, (screen_pos[0] + 8, screen_pos[1] - 8))
-
-            # Draw the route to the next target points if available
-            if drone.scheduled_position:  # Check if there are scheduled positions
-                route_points = [screen_pos]  # Start from current drone position
-                
-                # Add the next target positions to the route
-                for target_pos in drone.scheduled_position:
-                    target_screen_pos = self.world_to_screen(target_pos[0], target_pos[1])
-                    route_points.append(target_screen_pos)
-                
-                # Draw the route line
-                if len(route_points) > 1:
-                    pygame.draw.lines(self.screen, (100, 100, 255), False, route_points, 2)  # Light blue route line
-                    
-                    # Optionally, highlight the next target point
-                    if len(drone.scheduled_position) > 0:
-                        next_target = drone.scheduled_position[0]
-                        next_target_screen = self.world_to_screen(next_target[0], next_target[1])
-                        pygame.draw.circle(self.screen, (255, 255, 0), next_target_screen, max(3, int(2 * self.zoom)))  # Yellow circle for next target
+            drone_idx = int(drone.drone_id.split('_')[1]) if '_' in drone.drone_id else 0
+            drone_color = self.DRONE_COLORS[drone_idx % len(self.DRONE_COLORS)]
+            
+            if drone.scheduled_position:
+                self.draw_drone_route(drone, drone_color)
+        
+        # 绘制无人机和任务点
+        for drone in drones:
+            drone_idx = int(drone.drone_id.split('_')[1]) if '_' in drone.drone_id else 0
+            drone_color = self.DRONE_COLORS[drone_idx % len(self.DRONE_COLORS)]
+            self.draw_drone(drone, drone_color)
+        
+        # 绘制图例
+        self.draw_legend()
         
         # 绘制UI
-        self.draw_info_panel()
+        self.draw_info_panel(drones)
         
         pygame.display.flip()
+    
+    def draw_drone_route(self, drone, drone_color):
+        """绘制无人机的路线，区分不同类型的航点"""
+        route = drone.scheduled_position
+        
+        # 检查路线格式：是否包含类型信息 (x, y, type)
+        has_types = len(route) > 0 and len(route[0]) >= 3
+        
+        # 绘制路线线段（半透明）
+        for i in range(len(route) - 1):
+            if has_types:
+                start_screen = self.world_to_screen(route[i][0], route[i][1])
+                end_screen = self.world_to_screen(route[i+1][0], route[i+1][1])
+            else:
+                start_screen = self.world_to_screen(route[i][0], route[i][1])
+                end_screen = self.world_to_screen(route[i+1][0], route[i+1][1])
+            
+            # 绘制带箭头的线段
+            self.draw_arrow_line(start_screen, end_screen, drone_color, width=3, alpha=180)
+        
+        # 根据类型绘制航点标记
+        for i, point in enumerate(route):
+            if has_types:
+                x, y, point_type = point
+                screen_pos = self.world_to_screen(x, y)
+                
+                if point_type == 'source':
+                    # 任务起点 - 黄色方块
+                    square_size = max(5, int(4 * self.zoom))
+                    rect = pygame.Rect(screen_pos[0] - square_size, screen_pos[1] - square_size, 
+                                       square_size * 2, square_size * 2)
+                    pygame.draw.rect(self.screen, self.TASK_SOURCE_COLOR, rect)
+                    pygame.draw.rect(self.screen, (100, 100, 0), rect, 1)
+                elif point_type == 'dest':
+                    # 任务终点 - 粉色菱形
+                    self.draw_diamond(screen_pos, self.TASK_DEST_COLOR, max(6, int(5 * self.zoom)))
+                elif point_type == 'waypoint':
+                    # 绕飞航点 - 天蓝色三角形
+                    self.draw_triangle(screen_pos, self.WAYPOINT_COLOR, size=max(4, int(3 * self.zoom)))
+            else:
+                # 旧格式（无类型信息）：第一个是 source，最后一个是 dest，中间是 waypoint
+                screen_pos = self.world_to_screen(point[0], point[1])
+                if i == 0:
+                    square_size = max(5, int(4 * self.zoom))
+                    rect = pygame.Rect(screen_pos[0] - square_size, screen_pos[1] - square_size, 
+                                       square_size * 2, square_size * 2)
+                    pygame.draw.rect(self.screen, self.TASK_SOURCE_COLOR, rect)
+                    pygame.draw.rect(self.screen, (100, 100, 0), rect, 1)
+                elif i == len(route) - 1:
+                    self.draw_diamond(screen_pos, self.TASK_DEST_COLOR, max(6, int(5 * self.zoom)))
+                elif len(route) > 2:
+                    self.draw_triangle(screen_pos, self.WAYPOINT_COLOR, size=max(4, int(3 * self.zoom)))
+    
+    def draw_arrow_line(self, start, end, color, width=2, alpha=255):
+        """绘制带箭头的线段"""
+        # 创建带透明度的表面
+        pygame.draw.line(self.screen, color, start, end, width)
+        
+        # 计算箭头方向
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        length = (dx*dx + dy*dy)**0.5
+        if length < 20:
+            return
+        
+        # 箭头大小
+        arrow_size = max(5, int(4 * self.zoom))
+        
+        # 计算垂直方向
+        nx = -dy / length
+        ny = dx / length
+        
+        # 箭头位置（在终点附近）
+        ax = end[0] - dx * 0.2
+        ay = end[1] - dy * 0.2
+        
+        # 绘制箭头
+        arrow_points = [
+            (end[0], end[1]),
+            (int(ax - nx * arrow_size), int(ay - ny * arrow_size)),
+            (int(ax + nx * arrow_size), int(ay + ny * arrow_size))
+        ]
+        pygame.draw.polygon(self.screen, color, arrow_points)
+    
+    def draw_triangle(self, center, color, size=5):
+        """绘制三角形（绕飞点标记）"""
+        points = [
+            (center[0], center[1] - size),
+            (center[0] - size * 0.866, center[1] + size * 0.5),
+            (center[0] + size * 0.866, center[1] + size * 0.5)
+        ]
+        pygame.draw.polygon(self.screen, color, points)
+        pygame.draw.polygon(self.screen, (50, 50, 50), points, 1)
+    
+    def draw_diamond(self, center, color, size=6):
+        """绘制菱形（终点标记）"""
+        points = [
+            (center[0], center[1] - size),
+            (center[0] + size, center[1]),
+            (center[0], center[1] + size),
+            (center[0] - size, center[1])
+        ]
+        pygame.draw.polygon(self.screen, color, points)
+        pygame.draw.polygon(self.screen, (50, 50, 50), points, 1)
+    
+    def draw_drone(self, drone, drone_color):
+        """绘制无人机"""
+        x, y = drone.get_position()
+        screen_pos = self.world_to_screen(x, y)
+        
+        # 绘制无人机
+        drone_size = max(8, int(6 * self.zoom))
+        
+        if drone.is_free:
+            # 空闲状态：绿色实心圆形
+            pygame.draw.circle(self.screen, (50, 200, 50), screen_pos, drone_size + 2)
+            pygame.draw.circle(self.screen, (100, 255, 100), screen_pos, drone_size)
+        else:
+            # 执行任务：对应颜色的圆形，带白色边框
+            pygame.draw.circle(self.screen, drone_color, screen_pos, drone_size + 3)
+            pygame.draw.circle(self.screen, (255, 255, 255), screen_pos, drone_size + 1)
+            pygame.draw.circle(self.screen, drone_color, screen_pos, drone_size)
+        
+        # 绘制无人机ID
+        id_text = self.small_font.render(drone.drone_id, True, (0, 0, 0))
+        self.screen.blit(id_text, (screen_pos[0] + 10, screen_pos[1] - 8))
+    
+    def draw_legend(self):
+        """绘制图例"""
+        legend_items = [
+            ("Drone (IDLE)", (50, 200, 50)),
+            ("Drone (BUSY)", (255, 80, 80)),
+            ("Task Source", self.TASK_SOURCE_COLOR),
+            ("Task Dest", self.TASK_DEST_COLOR),
+            ("Waypoint", self.WAYPOINT_COLOR),
+        ]
+        
+        # 图例背景
+        legend_x = self.screen_size[0] - 180
+        legend_y = 10
+        item_height = 22
+        bg_height = len(legend_items) * item_height + 15
+        
+        pygame.draw.rect(self.screen, (220, 220, 220), 
+                        (legend_x - 10, legend_y - 5, 170, bg_height))
+        pygame.draw.rect(self.screen, (100, 100, 100), 
+                        (legend_x - 10, legend_y - 5, 170, bg_height), 1)
+        
+        for i, (text, color) in enumerate(legend_items):
+            y = legend_y + i * item_height
+            if "Drone" in text:
+                pygame.draw.circle(self.screen, color, (legend_x, y + 6), 5)
+            elif "Source" in text:
+                pygame.draw.rect(self.screen, color, (legend_x - 5, y + 1, 10, 10))
+            elif "Dest" in text:
+                self.draw_diamond((legend_x, y + 6), color, 5)
+            elif "Waypoint" in text:
+                self.draw_triangle((legend_x, y + 6), color, 5)
+            
+            label = self.small_font.render(text, True, (0, 0, 0))
+            self.screen.blit(label, (legend_x + 12, y))
     
     def render(self, drones):
         running = self.handle_events()
