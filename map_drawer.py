@@ -341,30 +341,34 @@ class OptimizedMapViewer:
 
         
         for drone in drones:
-            if drone.is_free == False:
-                x, y = drone.get_position()
-                screen_pos = self.world_to_screen(x, y)
-                pygame.draw.circle(self.screen, (0, 0, 255), screen_pos, max(5, int(3 * self.zoom)))
-                print("Drone position: ({}, {})".format(x, y))
+            # 始终绘制无人机位置
+            x, y = drone.get_position()
+            screen_pos = self.world_to_screen(x, y)
+            # 空闲时用绿色，正在执行任务时用蓝色
+            color = (0, 255, 0) if drone.is_free else (0, 0, 255)
+            pygame.draw.circle(self.screen, color, screen_pos, max(5, int(3 * self.zoom)))
+            # 绘制无人机ID
+            id_text = self.small_font.render(drone.drone_id, True, color)
+            self.screen.blit(id_text, (screen_pos[0] + 8, screen_pos[1] - 8))
 
-                # Draw the route to the next target points if available
-                if drone.scheduled_position:  # Check if there are scheduled positions
-                    route_points = [screen_pos]  # Start from current drone position
+            # Draw the route to the next target points if available
+            if drone.scheduled_position:  # Check if there are scheduled positions
+                route_points = [screen_pos]  # Start from current drone position
+                
+                # Add the next target positions to the route
+                for target_pos in drone.scheduled_position:
+                    target_screen_pos = self.world_to_screen(target_pos[0], target_pos[1])
+                    route_points.append(target_screen_pos)
+                
+                # Draw the route line
+                if len(route_points) > 1:
+                    pygame.draw.lines(self.screen, (100, 100, 255), False, route_points, 2)  # Light blue route line
                     
-                    # Add the next target positions to the route
-                    for target_pos in drone.scheduled_position:
-                        target_screen_pos = self.world_to_screen(target_pos[0], target_pos[1])
-                        route_points.append(target_screen_pos)
-                    
-                    # Draw the route line
-                    if len(route_points) > 1:
-                        pygame.draw.lines(self.screen, (100, 100, 255), False, route_points, 2)  # Light blue route line
-                        
-                        # Optionally, highlight the next target point
-                        if len(drone.scheduled_position) > 0:
-                            next_target = drone.scheduled_position[0]
-                            next_target_screen = self.world_to_screen(next_target[0], next_target[1])
-                            pygame.draw.circle(self.screen, (255, 255, 0), next_target_screen, max(3, int(2 * self.zoom)))  # Yellow circle for next target
+                    # Optionally, highlight the next target point
+                    if len(drone.scheduled_position) > 0:
+                        next_target = drone.scheduled_position[0]
+                        next_target_screen = self.world_to_screen(next_target[0], next_target[1])
+                        pygame.draw.circle(self.screen, (255, 255, 0), next_target_screen, max(3, int(2 * self.zoom)))  # Yellow circle for next target
         
         # 绘制UI
         self.draw_info_panel()
