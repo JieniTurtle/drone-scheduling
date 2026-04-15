@@ -3,7 +3,6 @@ from drone import Drone
 from task import WAREHOUSE_POS
 from map_drawer import OptimizedMapViewer
 from scheduler import TaskGenerator, GreedyScheduler
-from task_logger import TaskLogger
 
 if __name__ == "__main__":
     env = Environment('data/map/part_of_yangpu.osm')
@@ -14,9 +13,6 @@ if __name__ == "__main__":
         Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1], drone_id=f"drone_{i}")
         for i in range(NUM_DRONES)
     ]
-
-    # 初始化任务日志记录器
-    logger = TaskLogger(file_path='task_log.jsonl')
 
     # 从点击文件读取配送点并生成任务
     generator = TaskGenerator(file_path='clicked_positions.txt')
@@ -38,10 +34,8 @@ if __name__ == "__main__":
             assigned = GreedyScheduler.schedule_for_drone(drone, unassigned_tasks)
             if assigned:
                 for task in assigned:
-                    task.mark_assigned()
                     print(f"Drone {drone.drone_id} assigned: {task}")
                     drone.add_load(task.weight)
-                drone.pending_tasks.extend(assigned)
                 # 使用绕行路径规划
                 route = env.plan_route_for_tasks(drone, assigned)
                 drone.schedule_route(route)
@@ -64,19 +58,6 @@ if __name__ == "__main__":
             new_tasks = generator.generate_random_tasks(num_tasks=5)
             unassigned_tasks.extend(new_tasks)
         
-        # 收集各无人机已完成的任务并写入日志
-        for drone in env.drones:
-            while drone.completed_tasks:
-                done_task = drone.completed_tasks.pop(0)
-                latency = done_task.get_latency_info()
-                print(
-                    f"[Done] {done_task.task_id} | "
-                    f"wait={latency['wait_time']:.2f}s  "
-                    f"exec={latency['execution_time']:.2f}s  "
-                    f"total={latency['total_time']:.2f}s"
-                )
-                logger.log_task(done_task)
-
         # 多轮调度：检查空闲无人机并继续分配剩余任务
         for drone in env.drones:
             if drone.is_free:  # 无人机空闲
@@ -85,10 +66,8 @@ if __name__ == "__main__":
                     assigned = GreedyScheduler.schedule_for_drone(drone, unassigned_tasks)
                     if assigned:
                         for task in assigned:
-                            task.mark_assigned()
                             print(f"Drone {drone.drone_id} assigned: {task}")
                             drone.add_load(task.weight)
-                        drone.pending_tasks.extend(assigned)
                         # 使用绕行路径规划
                         route = env.plan_route_for_tasks(drone, assigned)
                         drone.schedule_route(route)
