@@ -554,6 +554,8 @@ class OptimizedMapViewer:
             print(f"FPS: {self.current_fps}")
         
         self.clock.tick(60)
+        
+        return running
 
 
     def run(self):

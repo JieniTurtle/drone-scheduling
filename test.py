@@ -42,7 +42,8 @@ if __name__ == "__main__":
 
     viewer = OptimizedMapViewer('data/map/part_of_yangpu.osm')
     frame_count = 0
-    while True:
+    running = True
+    while running:
         env.update()
         frame_count += 1
         
@@ -71,4 +72,5 @@ if __name__ == "__main__":
                         route = env.plan_route_for_tasks(drone, assigned)
                         drone.schedule_route(route)
         
-        viewer.render(env.drones)
+        # 检查pygame窗口事件，如果窗口被关闭则退出循环
+        running = viewer.render(env.drones)
