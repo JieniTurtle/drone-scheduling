@@ -10,6 +10,11 @@ class Drone:
         self.is_free = True
         self.home_position = (x, y)  # 记录出发点位置（用于返回装货）
 
+        # 待完成任务队列（按分配顺序排列）；每到达一个 dest 航点弹出一个
+        self.pending_tasks = []
+        # 已完成任务列表（供外部收集后记录日志）
+        self.completed_tasks = []
+
     def schedule_route(self, position):
         self.scheduled_position = position
         self.is_free = False
@@ -59,7 +64,15 @@ class Drone:
                 self.x = target_x
                 self.y = target_y
                 # Remove this target from schedule as we've reached it
-                self.scheduled_position.pop(0)
+                reached = self.scheduled_position.pop(0)
+
+                # 到达任务终点（dest）时标记对应任务完成
+                waypoint_type = reached[2] if len(reached) >= 3 else None
+                if waypoint_type == 'dest' and self.pending_tasks:
+                    finished_task = self.pending_tasks.pop(0)
+                    finished_task.mark_completed()
+                    self.completed_tasks.append(finished_task)
+
                 if not self.scheduled_position:
                     self.is_free = True
                     self.current_load = 0  # 任务完成，卸货
