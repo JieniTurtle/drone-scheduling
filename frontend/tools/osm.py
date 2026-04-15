@@ -22,11 +22,22 @@ def load_map_data(osm_file_path):
     
     # 提取道路并分类
     roads_by_type = defaultdict(list)
+    major_road_types = {
+        'motorway', 'motorway_link',
+        'trunk', 'trunk_link',
+        'primary', 'primary_link',
+        'secondary', 'secondary_link',
+        'tertiary', 'tertiary_link'
+    }
     for u, v, data in graph.edges(data=True):
         road_type = data.get('highway', 'residential')
         
         if isinstance(road_type, list):  # 修复：处理可能的列表类型
             road_type = road_type[0] if road_type else 'residential'
+
+        # 只保留主干道路，过滤掉小型道路（如 residential、service、footway 等）
+        if road_type not in major_road_types:
+            continue
         
         if 'geometry' in data:
             geom = data['geometry']
@@ -59,6 +70,7 @@ def load_map_data(osm_file_path):
         buildings_with_height.append({
             'geometry': building.geometry,
             'height': height_val,
+            'id': idx,
             'tags': building
         })
     
@@ -117,4 +129,32 @@ def get_building_location_by_name(buildings_with_height, name, exact=True):
         return None
     return locations[0] if len(locations) == 1 else locations
 
-    
+
+def get_global_bounds(buildings_with_height):
+    """获取所有建筑的全局边界框。
+
+    :param buildings_with_height: load_map_data 返回的建筑列表
+    :return: 全局边界框 (min_x, min_y, max_x, max_y)，如果没有建筑则返回 None
+    """
+    if not buildings_with_height:
+        return None
+
+    min_x = float('inf')
+    min_y = float('inf')
+    max_x = float('-inf')
+    max_y = float('-inf')
+
+    for building in buildings_with_height:
+        geom = building.get('geometry')
+        if geom is None:
+            continue
+        bounds = geom.bounds  # (minx, miny, maxx, maxy)
+        min_x = min(min_x, bounds[0])
+        min_y = min(min_y, bounds[1])
+        max_x = max(max_x, bounds[2])
+        max_y = max(max_y, bounds[3])
+
+    if min_x == float('inf'):
+        return None  # 没有有效的几何体
+
+    return (min_x, min_y, max_x, max_y)
