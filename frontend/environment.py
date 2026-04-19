@@ -1,22 +1,60 @@
 import osmnx as ox
 import numpy as np
 import heapq
+import time
+import datetime
 from shapely.geometry import Point, LineString
 import math
 from drone import Drone
 from task import Task
 # from test import OptimizedMapViewer
 from tools.osm import load_map_data, get_building_location_by_name, get_global_bounds
+from scheduler import TaskGenerator
+from map_drawer import OptimizedMapViewer
+from task import WAREHOUSE_POS
+
+
+MAX_UNASSIGNED_TASKS = 20  # 任务池中最大未分配任务数
 
 class Environment:
-    def __init__(self, osm_file_path):
+    def __init__(self, osm_file_path, visualize=False):
         _, buildings_with_height = load_map_data(osm_file_path)
 
         self.global_bounds = get_global_bounds(buildings_with_height)
 
         self.high_buildings = [b for b in buildings_with_height if b['height'] is not None and b['height'] > 20]
 
-        print(get_building_location_by_name( self.high_buildings, "衷和楼"))
+        self.task_generator = TaskGenerator(file_path='clicked_positions.txt')
+        self.unassigned_tasks = []
+        self.drones = []  # 初始化无人机列表
+        # 创建多架无人机（从仓库位置出发）
+        NUM_DRONES = 3  # 可根据需要调整无人机数量
+        self.drones = [
+            Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1], drone_id=f"drone_{i}")
+            for i in range(NUM_DRONES)
+        ]
+        
+        # 初始化模拟时间
+        self.current_time = 0
+        
+        # 跟踪已完成的任务，用于奖励计算
+        self.completed_tasks = []
+        
+        # 跟踪无人机分配的任务：{drone_idx: task}
+        self.drone_assignments = {}
+        
+         # 初始生成一批任务
+        new_tasks = self.task_generator.generate_random_tasks(num_tasks=8, current_time=self.current_time)
+        self.unassigned_tasks.extend(new_tasks)
+        print(f"Generated {len(new_tasks)} tasks:")
+        for task in new_tasks:
+            print(f"  {task}")
+
+        self.viewer = None
+        if visualize:
+            self.viewer = OptimizedMapViewer('data/map/part_of_yangpu.osm')
+
+        # print(get_building_location_by_name( self.high_buildings, "衷和楼"))
         print(f"加载了 {len(self.high_buildings)} 个具有高度信息的建筑物")
 
     def get_global_bounds(self):
@@ -25,23 +63,155 @@ class Environment:
     def get_high_buildings(self):
         return self.high_buildings
 
-    def update(self):
+    def step(self, actions):
+        # actions 格式: {drone_index: [task_id_list]}
+        for drone_idx, task_ids in actions.items():
+            if drone_idx < len(self.drones):
+                drone = self.drones[drone_idx]
+                for task_id in task_ids:
+                    if task_id is not None:
+                        # 找到对应的任务
+                        task_to_assign = None
+                        for task in self.unassigned_tasks:
+                            if task.task_id == task_id:
+                                task_to_assign = task
+                                break
+                        
+                        if task_to_assign is not None:
+                            # 记录任务分配
+                            self.drone_assignments[drone_idx] = task_to_assign
+                            
+                            # 规划路线
+                            route = self.plan_route_for_tasks(drone, [task_to_assign])
+                            # 分配路线给无人机
+                            drone.schedule_route(route)
+                            # 从未分配任务中移除
+                            self.unassigned_tasks.remove(task_to_assign)
+                            # 更新任务状态
+                            task_to_assign.update_status("assigned")
+
+        # 记录更新前的无人机状态，用于检测任务完成
+        prev_free_status = [drone.is_free for drone in self.drones]
+
+        # 每次调用 update 时，时间加一
+        self.current_time += 1
+
+        # 持续生成新任务，保持任务池有足够任务
+        if len(self.unassigned_tasks) < MAX_UNASSIGNED_TASKS:
+            new_tasks = self.task_generator.generate_random_tasks(num_tasks=5, current_time=self.current_time)
+            self.unassigned_tasks.extend(new_tasks)
+
         for drone in self.drones:
             drone.update()
 
+        # 检测任务完成：从忙碌变为闲置的无人机
+        for i, drone in enumerate(self.drones):
+            if not prev_free_status[i] and drone.is_free:
+                # 无人机刚刚完成任务
+                if i in self.drone_assignments:
+                    completed_task = self.drone_assignments[i]
+                    self.completed_tasks.append({
+                        'task': completed_task,
+                        'completion_time': self.current_time
+                    })
+                    # 移除分配记录
+                    del self.drone_assignments[i]
+
+        running = True
+        if self.viewer:
+            running = self.viewer.render(self.drones)
+
+        return self._obs(), self._reward(), running, None
     
-    def assign_task(self, drone, task):
+    def reset(self):
+        return self._obs()
+    
+    def _reward(self):
         """
-        Assigns a single task to a drone, planning a route that avoids buildings.
+        计算奖励
+        1. 每步负奖励：-0.1
+        2. 任务完成奖励：根据优先级给予奖励，如果超时则惩罚
         """
-        start_pos = drone.get_position()
-        end_pos = task.get_destination()
+        reward = 0.0
         
-        # Plan route avoiding buildings
-        planned_route = self.plan_route_around_buildings(start_pos, end_pos)
-        print(f"Planned route for {task.task_id}: {planned_route}")
-        # Schedule the route to the drone
-        drone.schedule_route(planned_route)
+        # 每步负奖励
+        reward -= 0.1
+        
+        # 计算刚刚完成的任务的奖励
+        for completed in self.completed_tasks:
+            task = completed['task']
+            completion_time = completed['completion_time']
+            
+            # 基础完成奖励
+            priority = task.get_priority()
+            if priority == 1:
+                reward += 100
+            elif priority == 2:
+                reward += 80
+            else:
+                reward += 50  # 默认奖励
+            
+            # 检查是否超时
+            deadline = task.get_deadline()
+            if deadline is not None and completion_time > deadline:
+                overtime = completion_time - deadline
+                reward -= 10 * overtime
+        
+        # 清空已处理的完成任务
+        self.completed_tasks.clear()
+        
+        return reward
+    
+    def _obs(self):
+        """
+        返回观察空间：
+        1. list：所有无人机的：当前位置
+        2. list：未分配订单的： 取位置 送位置 剩余时间：ttlj=ddlj−now 优先级
+        3. list《list》：掩码：所有无人机的is_free
+        """
+        # 1. 所有无人机的当前位置
+        drone_positions = []
+        for drone in self.drones:
+            pos = drone.get_position()
+            drone_positions.append([pos[0], pos[1]])
+        
+        # 2. 未分配订单的信息
+        unassigned_tasks_info = []
+        current_time = self.current_time
+        for task in self.unassigned_tasks:
+            source = task.get_source()
+            destination = task.get_destination()
+            deadline = task.get_deadline()
+            priority = task.get_priority()
+            task_id = task.task_id
+            weight = task.get_weight()
+            
+            # 计算剩余时间：ttlj = ddlj - now
+            if deadline is not None:
+                ttlj = deadline - current_time
+            else:
+                ttlj = float('inf')  # 如果没有截止时间，设为无穷大
+            
+            unassigned_tasks_info.append({
+                'task_id': task_id,
+                'source': [source[0], source[1]],
+                'destination': [destination[0], destination[1]],
+                'remaining_time': ttlj,
+                'priority': priority,
+                'weight': weight
+            })
+        
+        # 3. 所有无人机的is_free掩码
+        drone_free_masks = []
+        for drone in self.drones:
+            free_mask = [drone.is_free for task in self.unassigned_tasks]  # 每个任务对应一个掩码值
+            drone_free_masks.append(free_mask)
+        
+        return {
+            'drone_positions': drone_positions,
+            'unassigned_tasks': unassigned_tasks_info,
+            'drone_free_masks': drone_free_masks
+        }
     
     def plan_route_for_tasks(self, drone, tasks):
         """
@@ -49,6 +219,7 @@ class Environment:
         返回完整的绕行路线，每个点格式为 (x, y, type)。
         type: 'source' = 任务起点, 'dest' = 任务终点, 'waypoint' = 绕飞航点
         """
+        start_time = time.perf_counter()
         if not tasks:
             return []
         
@@ -86,6 +257,8 @@ class Environment:
             current_pos = dest
         
         print(f"Full planned route for drone {drone.drone_id}: {full_route}")
+        elapsed = time.perf_counter() - start_time
+        print(f"assign_task elapsed: {elapsed:.6f} seconds")
         
         # 验证整个路线是否与建筑物相交
         self.verify_route_with_types(full_route)
@@ -97,14 +270,6 @@ class Environment:
         for i in range(len(route) - 1):
             if not self.is_path_clear(route[i][:2], route[i+1][:2]):
                 print(f"WARNING: Route segment {route[i][:2]} -> {route[i+1][:2]} intersects with building!")
-                return False
-        return True
-    
-    def verify_route(self, route):
-        """验证路线是否与建筑物相交"""
-        for i in range(len(route) - 1):
-            if not self.is_path_clear(route[i], route[i+1]):
-                print(f"WARNING: Route segment {route[i]} -> {route[i+1]} intersects with building!")
                 return False
         return True
 
@@ -123,80 +288,10 @@ class Environment:
             # Return path excluding starting position
             return path[1:]
         
-        # A* failed, try to find waypoints around buildings manually
-        waypoints = self.find_waypoints_around_buildings(start_pos, end_pos)
-        if waypoints:
-            return waypoints
-        
         # Last resort: return direct destination with warning
         print(f"Warning: Could not find obstacle-free path from {start_pos} to {end_pos}")
         return [end_pos]
     
-    def find_waypoints_around_buildings(self, start_pos, end_pos):
-        """
-        当A*算法失败时，尝试手动找到绕过建筑物的航点。
-        """
-        # 找到所有与直线相交的建筑物
-        intersecting_buildings = []
-        direct_line = LineString([start_pos, end_pos])
-        
-        for building in self.high_buildings:
-            if building['geometry'].intersects(direct_line):
-                intersecting_buildings.append(building)
-        
-        if not intersecting_buildings:
-            return [end_pos]
-        
-        # 对每个相交的建筑物，找到绕行的航点
-        waypoints = []
-        for building in intersecting_buildings:
-            # 获取建筑物的边界框
-            bounds = building['geometry'].bounds  # (minx, miny, maxx, maxy)
-            
-            # 计算从起点到终点的方向
-            dx = end_pos[0] - start_pos[0]
-            dy = end_pos[1] - start_pos[1]
-            
-            # 找到建筑物在方向上的哪一侧，然后选择绕行的角点
-            center_x = (bounds[0] + bounds[2]) / 2
-            center_y = (bounds[1] + bounds[3]) / 2
-            
-            # 计算偏移量（绕开建筑物）
-            offset = 50  # 绕行距离
-            
-            # 选择绕行方向
-            if abs(dx) > abs(dy):
-                # 主要水平移动，垂直绕行
-                if start_pos[0] < center_x:
-                    # 从建筑下方绕行
-                    waypoint = (center_x - offset, bounds[3] + offset)
-                else:
-                    # 从建筑上方绕行
-                    waypoint = (center_x + offset, bounds[1] - offset)
-            else:
-                # 主要垂直移动，水平绕行
-                if start_pos[1] < center_y:
-                    # 从建筑左侧绕行
-                    waypoint = (bounds[2] + offset, center_y - offset)
-                else:
-                    # 从建筑右侧绕行
-                    waypoint = (bounds[0] - offset, center_y + offset)
-            
-            # 确保航点不在建筑物内部
-            waypoint = self.adjust_waypoint_outside_buildings(waypoint)
-            waypoints.append(waypoint)
-        
-        # 添加终点
-        waypoints.append(end_pos)
-        
-        # 验证路线是否通畅
-        full_route = [start_pos] + waypoints
-        if self.verify_route(full_route):
-            return waypoints
-        
-        return [end_pos]
-    
-    def adjust_waypoint_outside_buildings(self, waypoint):
         """调整航点，确保它在所有建筑物外部"""
         point = Point(waypoint)
         min_distance = 10  # 最小安全距离
@@ -318,18 +413,3 @@ class Environment:
                     return False
         
         return True
-
-if __name__ == "__main__":
-    env = Environment('data/map/map.osm')
-
-    env.drones = [Drone(357600.574872369, 3462308.772003661)]
-
-    env.assign_task(env.drones[0], Task(1, 1, (357400.574872369, 3462308.772003661)))
-
-    viewer = OptimizedMapViewer('data/map/map.osm')
-    for i in range(100):
-        viewer.render(env.drones)
-    # print(env.buildings_with_height[0]['geometry'])
-    while True:
-        env.update()
-        viewer.render(env.drones)

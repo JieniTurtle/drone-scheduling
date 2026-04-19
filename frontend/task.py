@@ -3,7 +3,7 @@ CHARGER_ROUTE_ID = "125465016"
 WAREHOUSE_POS = (357600.574872369, 3462308.772003661)
 
 class Task:
-    def __init__(self, task_id, weight, source, destination):
+    def __init__(self, task_id, weight, source, destination, deadline=None, priority=1):
         """
         初始化任务对象
         
@@ -11,11 +11,15 @@ class Task:
         :param weight: 物体的重量 (单位: kg)
         :param source: 起始地点
         :param destination: 目标地点
+        :param deadline: 截止时间 (可选)
+        :param priority: 优先级 (默认为1，数值越大优先级越高)
         """
         self.task_id = task_id
         self.weight = weight
         self.source = source
         self.destination = destination
+        self.deadline = deadline
+        self.priority = priority
         self.status = "pending"  # 任务状态: pending, assigned, in_progress, completed, failed
     
     def get_weight(self):
@@ -29,6 +33,14 @@ class Task:
     def get_destination(self):
         """获取目标地点"""
         return self.destination
+    
+    def get_deadline(self):
+        """获取截止时间"""
+        return self.deadline
+    
+    def get_priority(self):
+        """获取优先级"""
+        return self.priority
     
     def get_route(self):
         """获取任务的完整路线：起始点 -> 终点"""
@@ -44,7 +56,7 @@ class Task:
     
     def __str__(self):
         """返回任务的字符串表示"""
-        return f"Task(ID: {self.task_id}, Weight: {self.weight}kg, Source: {self.source}, Destination: {self.destination}, Status: {self.status})"
+        return f"Task(ID: {self.task_id}, Weight: {self.weight}kg, Source: {self.source}, Destination: {self.destination}, Deadline: {self.deadline}, Priority: {self.priority}, Status: {self.status})"
     
     def __repr__(self):
         """返回任务的详细表示"""
