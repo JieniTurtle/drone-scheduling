@@ -13,6 +13,7 @@ if __name__ == "__main__":
         observations, reward, running, _ = env.step(action)
 
         print(f"Frame: {frame_count}, Reward: {reward:.2f}")
+        frame_count += 1
         
         
         # 每60帧（约1秒）输出一次状态

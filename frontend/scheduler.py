@@ -65,23 +65,29 @@ class GreedyScheduler:
     def schedule_for_drone(observation):
         """
         贪心调度算法：为所有空闲无人机分配任务
-        1. 从观察空间中获取无人机位置、空闲状态和未分配任务信息
-        2. 为每个空闲无人机分配一个离当前位置最近的任务
+        1. 从观察空间中获取无人机位置、空闲状态、电量信息和未分配任务信息
+        2. 为每个空闲且电量充足（>=20%）的无人机分配一个离当前位置最近的任务
         返回: {drone_index: [assigned_task_id]} 字典（每个无人机最多分配一个任务）
         """
+        from drone import BATTERY_LOW_THRESHOLD
+
         drone_positions = observation['drone_positions']
         unassigned_tasks_info = observation['unassigned_tasks']
         drone_free_masks = observation['drone_free_masks']
+        drone_battery_levels = observation.get('drone_battery_levels', [1.0] * len(drone_positions))
 
         if not unassigned_tasks_info:
             return {}
 
         assignments = {}
 
-        # 为每个空闲无人机分配任务
+        # 为每个空闲且电量充足的无人机分配任务
         for drone_idx, (drone_pos, free_mask) in enumerate(zip(drone_positions, drone_free_masks)):
             # 检查无人机是否空闲（所有任务的掩码都为True表示空闲）
             if not all(free_mask):
+                continue
+            # 检查电量是否充足（>=20%）
+            if drone_battery_levels[drone_idx] < BATTERY_LOW_THRESHOLD:
                 continue
 
             # 如果没有任务可分配，跳过
@@ -128,7 +134,7 @@ class GreedyScheduler:
         
         for drone in drones:
             # 获取分配的任务ID
-            assigned_task_ids = GreedyScheduler.schedule_for_drone(drone, observation)
+            assigned_task_ids = GreedyScheduler.schedule_for_drone(observation)
             
             # 从原始任务列表中找到对应的Task对象
             assigned_tasks = []
@@ -144,6 +150,7 @@ class GreedyScheduler:
             # 为无人机设置路线
             if assigned_tasks:
                 route = [drone.get_position()] + [t.get_destination() for t in assigned_tasks]
-                drone.schedule_route(route)
+                task_id = assigned_tasks[0].task_id  # 传入当前执行的任务ID
+                drone.schedule_route(route, task_id)
         
         return assignments

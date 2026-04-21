@@ -1,10 +1,24 @@
 import math
+import random
 
 
 # ==================== 电池系统常量 ====================
-BATTERY_CAPACITY = 1000.0  # 电池最大容量 (Wh)
+BATTERY_CAPACITY = 15000.0  # 电池最大容量 (Wh)，足够大，确保20%电量能完成任意订单
 BATTERY_CONSUMPTION_BASE = 0.5  # 飞行基础功耗 (Wh/m)
 BATTERY_LOAD_PENALTY_FACTOR = 0.3  # 载重惩罚系数（满载时额外消耗比例）
+BATTERY_LOW_THRESHOLD = 0.2  # 低电量阈值，低于此值无法接单
+
+# ==================== 订单生成密集点 ====================
+# 从 clicked_positions.txt 中选取的点
+ORDER_HOTSPOTS = [
+    (358919.252551, 3463875.611049),
+    (359006.728578, 3464942.818570),
+    (358639.329267, 3462878.384349),
+    (357545.878938, 3463569.444957),
+    (359365.380286, 3463070.831606),
+    (357983.023875, 3462464.936166),
+    (359505.341928, 3464487.943233),
+]
 
 
 # ==================== 充电站 ====================
@@ -47,7 +61,8 @@ class Drone:
         # 任务信息
         self.tasks = []
         self.scheduled_position = []
-        self.is_free = True
+        self.executing_task_id = None  # 当前正在执行的已分配任务ID
+        self.is_free = True # 表示无人机是否可以接单
         
         # ==================== 电量系统 ====================
         self.battery_capacity = battery_capacity  # 电池最大容量 (Wh)
@@ -61,13 +76,13 @@ class Drone:
         """获取电量百分比 (0.0 ~ 1.0)"""
         return self.current_battery / self.battery_capacity
     
-    def is_low_battery(self, threshold=0.2):
+    def is_low_battery(self, threshold=BATTERY_LOW_THRESHOLD):
         """检查是否低电量"""
         return self.get_battery_level() < threshold
-    
-    def is_critical_battery(self, threshold=0.1):
-        """检查是否严重低电量"""
-        return self.get_battery_level() < threshold
+
+    def can_accept_task(self):
+        """检查无人机当前是否可以接单（空闲 + 电量充足）"""
+        return self.is_free and not self.is_low_battery()
     
     def consume_battery(self, distance):
         """
@@ -125,9 +140,13 @@ class Drone:
         """重置电量为满电（回到仓库时调用）"""
         self.current_battery = self.battery_capacity
 
-    def schedule_route(self, position):
+    def schedule_route(self, position, task_id=None):
         self.scheduled_position = position
-        self.is_free = False
+        self.executing_task_id = task_id
+        # 只有执行调度器分配的正式任务时才标记为忙碌
+        # 自动飞往充电站/待机不算正式任务，is_free保持True
+        if task_id is not None:
+            self.is_free = False
 
     def append_route(self, position):
         """追加航点，不覆盖现有航点"""
@@ -186,6 +205,20 @@ class Drone:
                 if not self.scheduled_position:
                     self.is_free = True
                     self.current_load = 0  # 任务完成，卸货
+                    self.executing_task_id = None  # 清除执行中任务ID
+                    # 任务完成后：根据电量决定去向
+                    if self.is_low_battery():
+                        # 电量不足，检查是否已在充电站
+                        drone_pos = (self.x, self.y)
+                        station_pos = DEFAULT_CHARGING_STATION.get_position()
+                        if drone_pos == station_pos:
+                            # 已在充电站，开始充电
+                            self.start_charging(DEFAULT_CHARGING_STATION.station_id)
+                        else:
+                            # 不在充电站，飞往充电站
+                            self.is_free = False
+                            self.schedule_route([station_pos])
+                    # else: 电量充足，原地待机，等待调度器分配新任务
             else:
                 # Move a step towards the target
                 # Normalize the direction and multiply by time_step

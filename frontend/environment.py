@@ -43,6 +43,9 @@ class Environment:
         # 跟踪无人机分配的任务：{drone_idx: task}
         self.drone_assignments = {}
         
+        # 跟踪每个无人机之前是否有执行中的任务（用于检测任务完成）
+        self._prev_executing_tasks = {i: drone.executing_task_id for i, drone in enumerate(self.drones)}
+        
          # 初始生成一批任务
         new_tasks = self.task_generator.generate_random_tasks(num_tasks=8, current_time=self.current_time)
         self.unassigned_tasks.extend(new_tasks)
@@ -84,14 +87,11 @@ class Environment:
                             # 规划路线
                             route = self.plan_route_for_tasks(drone, [task_to_assign])
                             # 分配路线给无人机
-                            drone.schedule_route(route)
+                            drone.schedule_route(route, task_to_assign.task_id)
                             # 从未分配任务中移除
                             self.unassigned_tasks.remove(task_to_assign)
                             # 更新任务状态
                             task_to_assign.update_status("assigned")
-
-        # 记录更新前的无人机状态，用于检测任务完成
-        prev_free_status = [drone.is_free for drone in self.drones]
 
         # 每次调用 update 时，时间加一
         self.current_time += 1
@@ -104,11 +104,13 @@ class Environment:
         for drone in self.drones:
             drone.update()
 
-        # 检测任务完成：从忙碌变为闲置的无人机
+        # 检测任务完成：通过 executing_task_id 判断（刚从执行中变为None表示任务完成）
+        # 遍历所有无人机，检查是否有刚完成的任务
         for i, drone in enumerate(self.drones):
-            if not prev_free_status[i] and drone.is_free:
-                # 无人机刚刚完成任务
-                if i in self.drone_assignments:
+            if drone.executing_task_id is None and i in self.drone_assignments:
+                # executing_task_id 为空，说明刚完成任务
+                # 检查之前是否有正在执行的任务（通过记录来判断）
+                if i in self._prev_executing_tasks and self._prev_executing_tasks[i] is not None:
                     completed_task = self.drone_assignments[i]
                     self.completed_tasks.append({
                         'task': completed_task,
@@ -116,6 +118,9 @@ class Environment:
                     })
                     # 移除分配记录
                     del self.drone_assignments[i]
+
+        # 更新每个无人机之前是否有执行中的任务
+        self._prev_executing_tasks = {i: drone.executing_task_id for i, drone in enumerate(self.drones)}
 
         running = True
         if self.viewer:
@@ -202,15 +207,17 @@ class Environment:
             })
         
         # 3. 所有无人机的is_free掩码
+        drone_battery_levels = [drone.get_battery_level() for drone in self.drones]
         drone_free_masks = []
         for drone in self.drones:
-            free_mask = [drone.is_free for task in self.unassigned_tasks]  # 每个任务对应一个掩码值
+            free_mask = [drone.is_free for task in self.unassigned_tasks]
             drone_free_masks.append(free_mask)
         
         return {
             'drone_positions': drone_positions,
             'unassigned_tasks': unassigned_tasks_info,
-            'drone_free_masks': drone_free_masks
+            'drone_free_masks': drone_free_masks,
+            'drone_battery_levels': drone_battery_levels
         }
     
     def plan_route_for_tasks(self, drone, tasks):
@@ -291,32 +298,6 @@ class Environment:
         # Last resort: return direct destination with warning
         print(f"Warning: Could not find obstacle-free path from {start_pos} to {end_pos}")
         return [end_pos]
-    
-        """调整航点，确保它在所有建筑物外部"""
-        point = Point(waypoint)
-        min_distance = 10  # 最小安全距离
-        
-        for building in self.high_buildings:
-            geom = building['geometry']
-            dist = geom.exterior.distance(point)
-            if dist < min_distance:
-                # 需要将航点移出建筑物
-                # 简单地增加偏移量
-                bounds = geom.bounds
-                center_x = (bounds[0] + bounds[2]) / 2
-                center_y = (bounds[1] + bounds[3]) / 2
-                
-                # 向远离建筑物的方向移动
-                dx = waypoint[0] - center_x
-                dy = waypoint[1] - center_y
-                dist = (dx*dx + dy*dy)**0.5
-                if dist > 0:
-                    waypoint = (
-                        waypoint[0] + (dx / dist) * (min_distance - dist + 10),
-                        waypoint[1] + (dy / dist) * (min_distance - dist + 10)
-                    )
-        
-        return waypoint
 
     def a_star_pathfinding(self, start, goal):
         """
