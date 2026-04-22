@@ -25,8 +25,11 @@ if __name__ == "__main__":
     while running:
         action = scheduler.step(observations, current_time=env.current_time)
         observations, reward, running, _ = env.step(action)
-        total_reward += reward
 
+        print(f"Frame: {frame_count}, Reward: {reward:.2f}")
+        frame_count += 1
+        
+        
         # 每60帧（约1秒）输出一次状态
         if frame_count % 60 == 0:
             free_drones = sum(1 for d in env.drones if d.is_free)

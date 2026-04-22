@@ -28,7 +28,7 @@ class Environment:
         self.unassigned_tasks = []
         self.drones = []  # 初始化无人机列表
         # 创建多架无人机（从仓库位置出发）
-        NUM_DRONES = 3  # 可根据需要调整无人机数量
+        NUM_DRONES = 3  # 可根据需要调整无人x机数量
         self.drones = [
             Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1], drone_id=f"drone_{i}")
             for i in range(NUM_DRONES)
@@ -42,12 +42,6 @@ class Environment:
         
         # 跟踪无人机分配的任务：{drone_idx: {'task': task, 'start_time': time}}
         self.drone_assignments = {}
-        
-        # 统计指标
-        self.total_completed_tasks = 0
-        self.total_on_time_tasks = 0
-        self.total_delay = 0.0
-        self.total_delivery_time = 0.0
         
          # 初始生成一批任务
         new_tasks = self.task_generator.generate_random_tasks(num_tasks=8, current_time=self.current_time)
@@ -138,14 +132,11 @@ class Environment:
                             # 规划路线
                             route = self.plan_route_for_tasks(drone, [task_to_assign])
                             # 分配路线给无人机
-                            drone.schedule_route(route)
+                            drone.schedule_route(route, task_to_assign.task_id)
                             # 从未分配任务中移除
                             self.unassigned_tasks.remove(task_to_assign)
                             # 更新任务状态
                             task_to_assign.update_status("assigned")
-
-        # 记录更新前的无人机状态，用于检测任务完成
-        prev_free_status = [drone.is_free for drone in self.drones]
 
         # 每次调用 update 时，时间加一
         self.current_time += 1
@@ -158,49 +149,13 @@ class Environment:
         for drone in self.drones:
             drone.update()
 
-        # 检测任务完成：从忙碌变为闲置的无人机
+        # 检测任务完成：通过 executing_task_id 判断（刚从执行中变为None表示任务完成）
+        # 遍历所有无人机，检查是否有刚完成的任务
         for i, drone in enumerate(self.drones):
             if not prev_free_status[i] and drone.is_free:
                 # 无人机刚刚完成任务
                 if i in self.drone_assignments:
-                    assignment_info = self.drone_assignments[i]
-                    completed_task = assignment_info['task']
-                    start_time = assignment_info['start_time']
-                    completion_time = self.current_time
-                    
-                    # 计算配送时长
-                    delivery_time = completion_time - start_time
-                    
-                    # 计算延迟
-                    deadline = completed_task.get_deadline()
-                    if deadline is not None and deadline != float('inf'):
-                        delay = max(0, completion_time - deadline)
-                        expected_time = deadline - start_time
-                        is_on_time = delay == 0
-                    else:
-                        delay = 0
-                        expected_time = delivery_time
-                        is_on_time = True
-                    
-                    # 更新统计指标
-                    self.total_completed_tasks += 1
-                    if is_on_time:
-                        self.total_on_time_tasks += 1
-                    self.total_delay += delay
-                    self.total_delivery_time += delivery_time
-                    
-                    # 打印任务完成信息
-                    self._print_task_completion(
-                        drone_id=drone.drone_id,
-                        task_id=completed_task.task_id,
-                        delivery_time=delivery_time,
-                        expected_time=expected_time,
-                        delay=delay,
-                        is_on_time=is_on_time,
-                        priority=completed_task.get_priority(),
-                        weight=completed_task.get_weight()
-                    )
-                    
+                    completed_task = self.drone_assignments[i]
                     self.completed_tasks.append({
                         'task': completed_task,
                         'completion_time': completion_time,
@@ -209,6 +164,9 @@ class Environment:
                     })
                     # 移除分配记录
                     del self.drone_assignments[i]
+
+        # 更新每个无人机之前是否有执行中的任务
+        self._prev_executing_tasks = {i: drone.executing_task_id for i, drone in enumerate(self.drones)}
 
         running = True
         if self.viewer:
@@ -297,7 +255,7 @@ class Environment:
         # 3. 所有无人机的is_free掩码
         drone_free_masks = []
         for drone in self.drones:
-            free_mask = [drone.is_free for task in self.unassigned_tasks]  # 每个任务对应一个掩码值
+            free_mask = [drone.is_free for task in self.unassigned_tasks]
             drone_free_masks.append(free_mask)
 
         # 3b. 扁平的 is_free 状态（与 unassigned_tasks 是否为空解耦，事件驱动调度依赖此字段）
@@ -388,32 +346,6 @@ class Environment:
         # Last resort: return direct destination with warning
         print(f"Warning: Could not find obstacle-free path from {start_pos} to {end_pos}")
         return [end_pos]
-    
-        """调整航点，确保它在所有建筑物外部"""
-        point = Point(waypoint)
-        min_distance = 10  # 最小安全距离
-        
-        for building in self.high_buildings:
-            geom = building['geometry']
-            dist = geom.exterior.distance(point)
-            if dist < min_distance:
-                # 需要将航点移出建筑物
-                # 简单地增加偏移量
-                bounds = geom.bounds
-                center_x = (bounds[0] + bounds[2]) / 2
-                center_y = (bounds[1] + bounds[3]) / 2
-                
-                # 向远离建筑物的方向移动
-                dx = waypoint[0] - center_x
-                dy = waypoint[1] - center_y
-                dist = (dx*dx + dy*dy)**0.5
-                if dist > 0:
-                    waypoint = (
-                        waypoint[0] + (dx / dist) * (min_distance - dist + 10),
-                        waypoint[1] + (dy / dist) * (min_distance - dist + 10)
-                    )
-        
-        return waypoint
 
     def a_star_pathfinding(self, start, goal):
         """
