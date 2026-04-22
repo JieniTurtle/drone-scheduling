@@ -28,7 +28,7 @@ class Environment:
         self.unassigned_tasks = []
         self.drones = []  # 初始化无人机列表
         # 创建多架无人机（从仓库位置出发）
-        NUM_DRONES = 3  # 可根据需要调整无人机数量
+        NUM_DRONES = 3  # 可根据需要调整无人x机数量
         self.drones = [
             Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1], drone_id=f"drone_{i}")
             for i in range(NUM_DRONES)
@@ -173,6 +173,7 @@ class Environment:
         1. list：所有无人机的：当前位置
         2. list：未分配订单的： 取位置 送位置 剩余时间：ttlj=ddlj−now 优先级
         3. list《list》：掩码：所有无人机的is_free
+        4. 无人机的当前电量
         """
         # 1. 所有无人机的当前位置
         drone_positions = []

@@ -79,10 +79,6 @@ class Drone:
     def is_low_battery(self, threshold=BATTERY_LOW_THRESHOLD):
         """检查是否低电量"""
         return self.get_battery_level() < threshold
-
-    def can_accept_task(self):
-        """检查无人机当前是否可以接单（空闲 + 电量充足）"""
-        return self.is_free and not self.is_low_battery()
     
     def consume_battery(self, distance):
         """

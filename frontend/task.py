@@ -3,7 +3,7 @@ CHARGER_ROUTE_ID = "125465016"
 WAREHOUSE_POS = (357600.574872369, 3462308.772003661)
 
 class Task:
-    def __init__(self, task_id, weight, source, destination, deadline=None, priority=1):
+    def __init__(self, task_id, weight, source, destination, deadline=None, priority=1, generation_time=None):
         """
         初始化任务对象
         
@@ -13,6 +13,7 @@ class Task:
         :param destination: 目标地点
         :param deadline: 截止时间 (可选)
         :param priority: 优先级 (默认为1，数值越大优先级越高)
+        :param generation_time: 任务生成的模拟时刻 (step)
         """
         self.task_id = task_id
         self.weight = weight
@@ -21,6 +22,7 @@ class Task:
         self.deadline = deadline
         self.priority = priority
         self.status = "pending"  # 任务状态: pending, assigned, in_progress, completed, failed
+        self.generation_time = generation_time  # 任务生成时刻 (step)
     
     def get_weight(self):
         """获取物体重量"""
@@ -54,9 +56,13 @@ class Task:
         else:
             raise ValueError(f"Invalid status: {status}. Valid statuses are: {valid_statuses}")
     
+    def get_generation_time(self):
+        """获取任务生成时刻"""
+        return self.generation_time
+    
     def __str__(self):
         """返回任务的字符串表示"""
-        return f"Task(ID: {self.task_id}, Weight: {self.weight}kg, Source: {self.source}, Destination: {self.destination}, Deadline: {self.deadline}, Priority: {self.priority}, Status: {self.status})"
+        return f"Task(ID: {self.task_id}, Weight: {self.weight}kg, Source: {self.source}, Destination: {self.destination}, Deadline: {self.deadline}, GenerationTime: {self.generation_time}, Priority: {self.priority}, Status: {self.status})"
     
     def __repr__(self):
         """返回任务的详细表示"""

@@ -41,14 +41,14 @@ class TaskGenerator:
             # 从候选点中随机选择两个不同的点作为起始点和终点
             source, destination = random.sample(self.destinations, 2)
             
-            # 生成随机截止时间（当前时间后1-24小时）
-            deadline_offset = random.randint(3600, 86400)  # 1-24小时
+            # 生成随机截止时间（当前时间后200~500步）
+            deadline_offset = random.randint(200, 500)  # 200~500步
             deadline = current_time + deadline_offset
             
             # 生成随机优先级（1-5）
             priority = random.randint(1, 5)
             
-            task = Task(task_id=f"task_{self.task_counter}", weight=weight, source=source, destination=destination, deadline=deadline, priority=priority)
+            task = Task(task_id=f"task_{self.task_counter}", weight=weight, source=source, destination=destination, deadline=deadline, priority=priority, generation_time=current_time)
             tasks.append(task)
         return tasks
 
