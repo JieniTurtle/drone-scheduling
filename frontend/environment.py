@@ -43,6 +43,9 @@ class Environment:
         # 跟踪无人机分配的任务：{drone_idx: {'task': task, 'start_time': time}}
         self.drone_assignments = {}
         
+        # 跟踪每个无人机之前的空闲状态
+        self._prev_free_status = {i: True for i in range(len(self.drones))}
+        
          # 初始生成一批任务
         new_tasks = self.task_generator.generate_random_tasks(num_tasks=8, current_time=self.current_time)
         self.unassigned_tasks.extend(new_tasks)
@@ -152,10 +155,22 @@ class Environment:
         # 检测任务完成：通过 executing_task_id 判断（刚从执行中变为None表示任务完成）
         # 遍历所有无人机，检查是否有刚完成的任务
         for i, drone in enumerate(self.drones):
-            if not prev_free_status[i] and drone.is_free:
+            if not self._prev_free_status.get(i, True) and drone.is_free:
                 # 无人机刚刚完成任务
                 if i in self.drone_assignments:
-                    completed_task = self.drone_assignments[i]
+                    assignment_info = self.drone_assignments[i]
+                    completed_task = assignment_info['task']
+                    start_time = assignment_info['start_time']
+                    completion_time = self.current_time
+                    delivery_time = completion_time - start_time
+                    
+                    # 计算延迟
+                    deadline = completed_task.get_deadline()
+                    if deadline is not None:
+                        delay = max(0, completion_time - deadline)
+                    else:
+                        delay = 0
+                    
                     self.completed_tasks.append({
                         'task': completed_task,
                         'completion_time': completion_time,
@@ -165,8 +180,8 @@ class Environment:
                     # 移除分配记录
                     del self.drone_assignments[i]
 
-        # 更新每个无人机之前是否有执行中的任务
-        self._prev_executing_tasks = {i: drone.executing_task_id for i, drone in enumerate(self.drones)}
+        # 更新每个无人机之前的空闲状态
+        self._prev_free_status = {i: drone.is_free for i, drone in enumerate(self.drones)}
 
         running = True
         if self.viewer:
