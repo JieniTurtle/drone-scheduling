@@ -74,7 +74,6 @@ class GreedyScheduler:
         drone_positions = observation['drone_positions']
         unassigned_tasks_info = observation['unassigned_tasks']
         drone_free_masks = observation['drone_free_masks']
-        drone_battery_levels = observation.get('drone_battery_levels', [1.0] * len(drone_positions))
 
         if not unassigned_tasks_info:
             return {}
@@ -85,9 +84,6 @@ class GreedyScheduler:
         for drone_idx, (drone_pos, free_mask) in enumerate(zip(drone_positions, drone_free_masks)):
             # 检查无人机是否空闲（所有任务的掩码都为True表示空闲）
             if not all(free_mask):
-                continue
-            # 检查电量是否充足（>=20%）
-            if drone_battery_levels[drone_idx] < BATTERY_LOW_THRESHOLD:
                 continue
 
             # 如果没有任务可分配，跳过

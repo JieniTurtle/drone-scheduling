@@ -173,7 +173,6 @@ class Environment:
         1. list：所有无人机的：当前位置
         2. list：未分配订单的： 取位置 送位置 剩余时间：ttlj=ddlj−now 优先级
         3. list《list》：掩码：所有无人机的is_free
-        4. 无人机的当前电量
         """
         # 1. 所有无人机的当前位置
         drone_positions = []
@@ -208,7 +207,6 @@ class Environment:
             })
         
         # 3. 所有无人机的is_free掩码
-        drone_battery_levels = [drone.get_battery_level() for drone in self.drones]
         drone_free_masks = []
         for drone in self.drones:
             free_mask = [drone.is_free for task in self.unassigned_tasks]
@@ -217,8 +215,7 @@ class Environment:
         return {
             'drone_positions': drone_positions,
             'unassigned_tasks': unassigned_tasks_info,
-            'drone_free_masks': drone_free_masks,
-            'drone_battery_levels': drone_battery_levels
+            'drone_free_masks': drone_free_masks
         }
     
     def plan_route_for_tasks(self, drone, tasks):
