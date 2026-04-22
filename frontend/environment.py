@@ -40,8 +40,14 @@ class Environment:
         # 跟踪已完成的任务，用于奖励计算
         self.completed_tasks = []
         
-        # 跟踪无人机分配的任务：{drone_idx: task}
+        # 跟踪无人机分配的任务：{drone_idx: {'task': task, 'start_time': time}}
         self.drone_assignments = {}
+        
+        # 统计指标
+        self.total_completed_tasks = 0
+        self.total_on_time_tasks = 0
+        self.total_delay = 0.0
+        self.total_delivery_time = 0.0
         
          # 初始生成一批任务
         new_tasks = self.task_generator.generate_random_tasks(num_tasks=8, current_time=self.current_time)
@@ -62,6 +68,51 @@ class Environment:
     
     def get_high_buildings(self):
         return self.high_buildings
+    
+    def _print_task_completion(self, drone_id, task_id, delivery_time, expected_time, 
+                               delay, is_on_time, priority, weight):
+        """打印任务完成信息"""
+        status = "✓ 准时" if is_on_time else "✗ 延迟"
+        print(f"\n{'='*70}")
+        print(f"📦 任务完成: {task_id}")
+        print(f"{'='*70}")
+        print(f"  无人机: {drone_id}")
+        print(f"  优先级: {priority}/5  |  货物重量: {weight}kg")
+        print(f"  配送时长: {delivery_time:.1f} 时间单位")
+        print(f"  预期时长: {expected_time:.1f} 时间单位")
+        if not is_on_time:
+            print(f"  延迟时间: {delay:.1f} 时间单位")
+        print(f"  状态: {status}")
+        print(f"{'='*70}")
+    
+    def get_statistics(self):
+        """获取当前统计指标"""
+        if self.total_completed_tasks == 0:
+            return {
+                'total_completed': 0,
+                'on_time_rate': 0.0,
+                'avg_delay': 0.0,
+                'avg_delivery_time': 0.0
+            }
+        
+        return {
+            'total_completed': self.total_completed_tasks,
+            'on_time_rate': self.total_on_time_tasks / self.total_completed_tasks,
+            'avg_delay': self.total_delay / self.total_completed_tasks,
+            'avg_delivery_time': self.total_delivery_time / self.total_completed_tasks
+        }
+    
+    def print_statistics(self):
+        """打印累计统计信息"""
+        stats = self.get_statistics()
+        print(f"\n{'='*70}")
+        print(f"📊 累计统计")
+        print(f"{'='*70}")
+        print(f"  完成任务数: {stats['total_completed']}")
+        print(f"  准时率: {stats['on_time_rate']:.2%}")
+        print(f"  平均延迟: {stats['avg_delay']:.2f} 时间单位")
+        print(f"  平均配送时长: {stats['avg_delivery_time']:.2f} 时间单位")
+        print(f"{'='*70}\n")
 
     def step(self, actions):
         # actions 格式: {drone_index: [task_id_list]}
@@ -78,8 +129,11 @@ class Environment:
                                 break
                         
                         if task_to_assign is not None:
-                            # 记录任务分配
-                            self.drone_assignments[drone_idx] = task_to_assign
+                            # 记录任务分配（包含开始时间）
+                            self.drone_assignments[drone_idx] = {
+                                'task': task_to_assign,
+                                'start_time': self.current_time
+                            }
                             
                             # 规划路线
                             route = self.plan_route_for_tasks(drone, [task_to_assign])
@@ -109,10 +163,49 @@ class Environment:
             if not prev_free_status[i] and drone.is_free:
                 # 无人机刚刚完成任务
                 if i in self.drone_assignments:
-                    completed_task = self.drone_assignments[i]
+                    assignment_info = self.drone_assignments[i]
+                    completed_task = assignment_info['task']
+                    start_time = assignment_info['start_time']
+                    completion_time = self.current_time
+                    
+                    # 计算配送时长
+                    delivery_time = completion_time - start_time
+                    
+                    # 计算延迟
+                    deadline = completed_task.get_deadline()
+                    if deadline is not None and deadline != float('inf'):
+                        delay = max(0, completion_time - deadline)
+                        expected_time = deadline - start_time
+                        is_on_time = delay == 0
+                    else:
+                        delay = 0
+                        expected_time = delivery_time
+                        is_on_time = True
+                    
+                    # 更新统计指标
+                    self.total_completed_tasks += 1
+                    if is_on_time:
+                        self.total_on_time_tasks += 1
+                    self.total_delay += delay
+                    self.total_delivery_time += delivery_time
+                    
+                    # 打印任务完成信息
+                    self._print_task_completion(
+                        drone_id=drone.drone_id,
+                        task_id=completed_task.task_id,
+                        delivery_time=delivery_time,
+                        expected_time=expected_time,
+                        delay=delay,
+                        is_on_time=is_on_time,
+                        priority=completed_task.get_priority(),
+                        weight=completed_task.get_weight()
+                    )
+                    
                     self.completed_tasks.append({
                         'task': completed_task,
-                        'completion_time': self.current_time
+                        'completion_time': completion_time,
+                        'delivery_time': delivery_time,
+                        'delay': delay
                     })
                     # 移除分配记录
                     del self.drone_assignments[i]
@@ -206,11 +299,15 @@ class Environment:
         for drone in self.drones:
             free_mask = [drone.is_free for task in self.unassigned_tasks]  # 每个任务对应一个掩码值
             drone_free_masks.append(free_mask)
-        
+
+        # 3b. 扁平的 is_free 状态（与 unassigned_tasks 是否为空解耦，事件驱动调度依赖此字段）
+        drone_is_free = [drone.is_free for drone in self.drones]
+
         return {
             'drone_positions': drone_positions,
             'unassigned_tasks': unassigned_tasks_info,
-            'drone_free_masks': drone_free_masks
+            'drone_free_masks': drone_free_masks,
+            'drone_is_free': drone_is_free,
         }
     
     def plan_route_for_tasks(self, drone, tasks):

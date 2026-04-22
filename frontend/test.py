@@ -1,23 +1,62 @@
+import os
+import sys
+
+# 让 frontend 能 import 到 backend_si
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from environment import Environment
-from scheduler import GreedyScheduler
+from backend_si.pso_scheduler import PSOScheduler
 
 if __name__ == "__main__":
+    print("=" * 70)
+    print("无人机配送调度仿真 - PSOScheduler（双通道 + 动态贪心，配置见 backend_si/config.yaml）")
+    print("=" * 70)
+
     env = Environment('data/map/part_of_yangpu.osm', visualize=True)
 
+    # 所有可调参数读自 backend_si/config.yaml；要换实验配置传 config_path=...
+    scheduler = PSOScheduler(num_drones=len(env.drones), verbose=True)
 
     frame_count = 0
     running = True
     observations = env.reset()  # 获取初始状态
-    while running:
-        action = GreedyScheduler.schedule_for_drone(observations)  # 获取调度决策
-        observations, reward, running, _ = env.step(action)
+    total_reward = 0.0
 
-        print(f"Frame: {frame_count}, Reward: {reward:.2f}")
-        
-        
+    while running:
+        action = scheduler.step(observations, current_time=env.current_time)
+        observations, reward, running, _ = env.step(action)
+        total_reward += reward
+
         # 每60帧（约1秒）输出一次状态
         if frame_count % 60 == 0:
             free_drones = sum(1 for d in env.drones if d.is_free)
             busy_drones = sum(1 for d in env.drones if not d.is_free)
-            # print(f"[Status] Unassigned tasks: {len(unassigned_tasks)}, Free drones: {free_drones}, Busy drones: {busy_drones}")
+            queue_sizes = {i: len(q) for i, q in scheduler.drone_queues.items()}
+            print(f"\n[Frame {frame_count}] Reward: {reward:.2f}, Total: {total_reward:.2f}, "
+                  f"Tasks: {len(observations['unassigned_tasks'])}, "
+                  f"Free: {free_drones}, Busy: {busy_drones}, "
+                  f"Queues: {queue_sizes}, Buffer: {len(scheduler.pending_buffer)}")
+        
+        # 每300帧（约5秒）打印一次累计统计
+        if frame_count > 0 and frame_count % 300 == 0:
+            env.print_statistics()
+        
+        frame_count += 1
+    
+    print("\n" + "=" * 70)
+    print(f"仿真结束")
+    print("=" * 70)
+    print(f"总帧数: {frame_count}")
+    print(f"总奖励: {total_reward:.2f}")
+    print("=" * 70)
+    
+    # 打印最终统计
+    env.print_statistics()
+
+    print("=" * 70)
+    print("调度器事件统计")
+    print("=" * 70)
+    for k, v in scheduler.get_stats().items():
+        print(f"  {k}: {v}")
+    print("=" * 70)
         

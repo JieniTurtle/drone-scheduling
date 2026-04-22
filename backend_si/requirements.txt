@@ -1,0 +1,7 @@
+# PSO调度器依赖包
+numpy>=1.20.0
+matplotlib>=3.3.0
+
+# 可选：用于性能分析
+# pandas>=1.2.0
+# seaborn>=0.11.0

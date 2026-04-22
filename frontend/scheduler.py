@@ -1,7 +1,12 @@
 import random
 import math
 import datetime
+import sys
+import os
 from task import Task
+
+# 让 frontend 能 import 到 backend_si（PSOScheduler 在那里）
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def load_destinations_from_file(file_path):
