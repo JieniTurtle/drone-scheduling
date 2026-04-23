@@ -73,7 +73,7 @@ class EnvDroneEnv(MultiAgentEnv):
         try:
             # frontend Environment relies on relative paths for local assets.
             os.chdir(str(self._frontend_dir))
-            return Environment(str(self._map_path), visualize=False)
+            return Environment(str(self._map_path), visualize=False, episode_max_steps=self.episode_limit)
         finally:
             os.chdir(prev_cwd)
 
@@ -107,15 +107,27 @@ class EnvDroneEnv(MultiAgentEnv):
             selected_task_ids.add(task_id)
             assignments[agent_id] = [task_id]
 
-        next_obs, reward, running, _ = self._frontend_env.step(assignments)
+        next_obs, reward, frontend_done, frontend_info = self._frontend_env.step(assignments)
         self._last_obs = next_obs
         self._t += 1
 
         hit_episode_limit = self._t >= self.episode_limit
-        terminated = bool(hit_episode_limit or (not running))
+        terminated = bool(hit_episode_limit or frontend_done)
         env_info = {
             "episode_limit": bool(hit_episode_limit),
         }
+
+        if terminated:
+            if isinstance(frontend_info, dict):
+                for k in ("completion_rate", "on_time_rate", "avg_delay"):
+                    if k in frontend_info:
+                        env_info[k] = float(frontend_info[k])
+            if hasattr(self._frontend_env, "get_statistics"):
+                stats = self._frontend_env.get_statistics()
+                env_info["completion_rate"] = float(stats.get("completion_rate", env_info.get("completion_rate", 0.0)))
+                env_info["on_time_rate"] = float(stats.get("on_time_rate", env_info.get("on_time_rate", 0.0)))
+                env_info["avg_delay"] = float(stats.get("avg_delay", env_info.get("avg_delay", 0.0)))
+
         return float(reward), terminated, env_info
 
     def _to_action_list(self, actions):
