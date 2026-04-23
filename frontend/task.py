@@ -1,3 +1,8 @@
+import random
+
+from config import get_frontend_config
+
+
 WAREHOUSE_ROUTE_ID = "1364970737#0"
 CHARGER_ROUTE_ID = "125465016"
 WAREHOUSE_POS = (357600.574872369, 3462308.772003661)
@@ -67,3 +72,73 @@ class Task:
     def __repr__(self):
         """返回任务的详细表示"""
         return self.__str__()
+
+
+def load_destinations_from_file(file_path):
+    """从文件读取配送目的地坐标列表"""
+    destinations = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(',')
+                if len(parts) != 2:
+                    continue
+                x, y = float(parts[0]), float(parts[1])
+                destinations.append((x, y))
+    except FileNotFoundError:
+        print(f"Warning: {file_path} not found. No destinations loaded.")
+    return destinations
+
+
+class TaskGenerator:
+    """任务生成器，统一封装任务生成逻辑。"""
+
+    def __init__(self, possible_destinations=None, file_path=None):
+        cfg = get_frontend_config().get("task", {})
+        if file_path is None:
+            file_path = cfg.get("clicked_positions_file", "clicked_positions.txt")
+
+        if possible_destinations is None:
+            possible_destinations = load_destinations_from_file(file_path)
+
+        self.destinations = possible_destinations
+        self.task_counter = 0
+        self.weight_min = int(cfg.get("weight_min", 1))
+        self.weight_max = int(cfg.get("weight_max", 4))
+        self.priority_min = int(cfg.get("priority_min", 1))
+        self.priority_max = int(cfg.get("priority_max", 5))
+        self.deadline_offset_min = int(cfg.get("deadline_offset_min", 200))
+        self.deadline_offset_max = int(cfg.get("deadline_offset_max", 500))
+
+    def generate_random_tasks(self, num_tasks=5, current_time=0):
+        """随机生成任务，每个任务包含起点、终点、截止时间与优先级。"""
+        if len(self.destinations) < 2:
+            print("Warning: Need at least 2 destinations for task generation.")
+            return []
+
+        current_time = 0 if current_time is None else current_time
+        tasks = []
+        for _ in range(max(0, int(num_tasks))):
+            self.task_counter += 1
+            weight = random.randint(self.weight_min, self.weight_max)
+            source, destination = random.sample(self.destinations, 2)
+
+            deadline_offset = random.randint(self.deadline_offset_min, self.deadline_offset_max)
+            deadline = current_time + deadline_offset
+            priority = random.randint(self.priority_min, self.priority_max)
+
+            tasks.append(
+                Task(
+                    task_id=f"task_{self.task_counter}",
+                    weight=weight,
+                    source=source,
+                    destination=destination,
+                    deadline=deadline,
+                    priority=priority,
+                    generation_time=current_time,
+                )
+            )
+        return tasks

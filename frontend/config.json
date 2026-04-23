@@ -1,0 +1,23 @@
+{
+  "environment": {
+    "max_unassigned_tasks": 5,
+    "episode_max_steps": 1200,
+    "num_drones": 3,
+    "initial_task_count": 8
+  },
+  "task": {
+    "clicked_positions_file": "clicked_positions.txt",
+    "weight_min": 1,
+    "weight_max": 4,
+    "priority_min": 1,
+    "priority_max": 5,
+    "deadline_offset_min": 200,
+    "deadline_offset_max": 500
+  },
+  "charging_station": {
+    "station_id": 0,
+    "x": 356000.0,
+    "y": 3463000.0,
+    "charging_power": 50
+  }
+}

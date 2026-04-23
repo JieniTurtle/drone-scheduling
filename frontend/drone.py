@@ -1,5 +1,6 @@
 import math
 import random
+from charging_station import DEFAULT_CHARGING_STATION
 
 
 # ==================== 电池系统常量 ====================
@@ -19,29 +20,6 @@ ORDER_HOTSPOTS = [
     (357983.023875, 3462464.936166),
     (359505.341928, 3464487.943233),
 ]
-
-
-# ==================== 充电站 ====================
-class ChargingStation:
-    """简单的充电站"""
-    def __init__(self, station_id, x, y, charging_power=50):
-        self.station_id = station_id
-        self.x = x
-        self.y = y
-        self.charging_power = charging_power  # 每step充电量 (Wh)
-
-    def get_position(self):
-        return (self.x, self.y)
-
-
-
-# 默认充电站位置（地图中的固定坐标）
-DEFAULT_CHARGING_STATION = ChargingStation(
-    station_id=0,
-    x=356000.0,
-    y=3463000.0,
-    charging_power=50
-)
 
 
 # ==================== 无人机类 ====================

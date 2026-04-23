@@ -18,13 +18,13 @@ if __name__ == "__main__":
     scheduler = PSOScheduler(num_drones=len(env.drones), verbose=True)
 
     frame_count = 0
-    running = True
+    done = False
     observations = env.reset()  # 获取初始状态
     total_reward = 0.0
 
-    while running:
+    while not done:
         action = scheduler.step(observations, current_time=env.current_time)
-        observations, reward, running, _ = env.step(action)
+        observations, reward, done, _ = env.step(action)
 
         print(f"Frame: {frame_count}, Reward: {reward:.2f}")
         frame_count += 1

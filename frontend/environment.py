@@ -6,16 +6,20 @@ import datetime
 from shapely.geometry import Point, LineString
 import math
 from drone import Drone
-from task import Task
+from config import get_frontend_config
 # from test import OptimizedMapViewer
 from tools.osm import load_map_data, get_building_location_by_name, get_global_bounds
-from scheduler import TaskGenerator
+from task import TaskGenerator
 from map_drawer import OptimizedMapViewer
 from task import WAREHOUSE_POS
 
 
-MAX_UNASSIGNED_TASKS = 5  # 任务池中最大未分配任务数
-DEFAULT_EPISODE_MAX_STEPS = 1200  # 每个回合最大步数（约可覆盖每架无人机多次配送）
+CFG = get_frontend_config()
+ENV_CFG = CFG.get("environment", {})
+MAX_UNASSIGNED_TASKS = int(ENV_CFG.get("max_unassigned_tasks", 5))
+DEFAULT_EPISODE_MAX_STEPS = int(ENV_CFG.get("episode_max_steps", 1200))
+DEFAULT_NUM_DRONES = int(ENV_CFG.get("num_drones", 3))
+DEFAULT_INITIAL_TASK_COUNT = int(ENV_CFG.get("initial_task_count", 8))
 
 class Environment:
     def __init__(self, osm_file_path, visualize=False, episode_max_steps=DEFAULT_EPISODE_MAX_STEPS):
@@ -25,12 +29,14 @@ class Environment:
 
         self.high_buildings = [b for b in buildings_with_height if b['height'] is not None and b['height'] > 20]
 
-        self.task_generator = TaskGenerator(file_path='clicked_positions.txt')
+        task_cfg = CFG.get("task", {})
+        task_file = task_cfg.get("clicked_positions_file", 'clicked_positions.txt')
+        self.task_generator = TaskGenerator(file_path=task_file)
         self.unassigned_tasks = []
         self.drones = []  # 初始化无人机列表
         self.episode_max_steps = int(episode_max_steps)
         # 创建多架无人机（从仓库位置出发）
-        NUM_DRONES = 3  # 可根据需要调整无人x机数量
+        NUM_DRONES = DEFAULT_NUM_DRONES
         self.drones = [
             Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1], drone_id=f"drone_{i}")
             for i in range(NUM_DRONES)
@@ -56,7 +62,7 @@ class Environment:
         self.total_delivery_time = 0.0
         
          # 初始生成一批任务
-        new_tasks = self.task_generator.generate_random_tasks(num_tasks=8, current_time=self.current_time)
+        new_tasks = self.task_generator.generate_random_tasks(num_tasks=DEFAULT_INITIAL_TASK_COUNT, current_time=self.current_time)
         self.unassigned_tasks.extend(new_tasks)
         self.total_generated_tasks += len(new_tasks)
         print(f"Generated {len(new_tasks)} tasks:")
@@ -227,7 +233,7 @@ class Environment:
     
     def reset(self):
         self.unassigned_tasks = []
-        NUM_DRONES = len(self.drones) if self.drones else 3
+        NUM_DRONES = len(self.drones) if self.drones else DEFAULT_NUM_DRONES
         self.drones = [
             Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1], drone_id=f"drone_{i}")
             for i in range(NUM_DRONES)
@@ -243,7 +249,7 @@ class Environment:
         self.total_delay = 0.0
         self.total_delivery_time = 0.0
 
-        new_tasks = self.task_generator.generate_random_tasks(num_tasks=8, current_time=self.current_time)
+        new_tasks = self.task_generator.generate_random_tasks(num_tasks=DEFAULT_INITIAL_TASK_COUNT, current_time=self.current_time)
         self.unassigned_tasks.extend(new_tasks)
         self.total_generated_tasks += len(new_tasks)
 

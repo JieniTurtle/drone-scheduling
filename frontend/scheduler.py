@@ -1,61 +1,4 @@
-import random
 import math
-import datetime
-import sys
-import os
-from task import Task
-
-# 让 frontend 能 import 到 backend_si（PSOScheduler 在那里）
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def load_destinations_from_file(file_path):
-    """从文件读取配送目的地坐标列表"""
-    destinations = []
-    try:
-        with open(file_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    parts = line.split(',')
-                    if len(parts) == 2:
-                        x, y = float(parts[0]), float(parts[1])
-                        destinations.append((x, y))
-    except FileNotFoundError:
-        print(f"Warning: {file_path} not found. No destinations loaded.")
-    return destinations
-
-
-class TaskGenerator:
-    def __init__(self, possible_destinations=None, file_path='clicked_positions.txt'):
-        if possible_destinations is None:
-            possible_destinations = load_destinations_from_file(file_path)
-        self.destinations = possible_destinations
-        self.task_counter = 0
-
-    def generate_random_tasks(self, num_tasks=5, current_time=None):
-        """随机生成指定数量的任务，每个任务包含起始点和终点"""
-        if len(self.destinations) < 2:
-            print("Warning: Need at least 2 destinations for task generation.")
-            return []
-        
-        tasks = []
-        for _ in range(num_tasks):
-            self.task_counter += 1
-            weight = random.randint(1, 4)
-            # 从候选点中随机选择两个不同的点作为起始点和终点
-            source, destination = random.sample(self.destinations, 2)
-            
-            # 生成随机截止时间（当前时间后200~500步）
-            deadline_offset = random.randint(200, 500)  # 200~500步
-            deadline = current_time + deadline_offset
-            
-            # 生成随机优先级（1-5）
-            priority = random.randint(1, 5)
-            
-            task = Task(task_id=f"task_{self.task_counter}", weight=weight, source=source, destination=destination, deadline=deadline, priority=priority, generation_time=current_time)
-            tasks.append(task)
-        return tasks
 
 
 class GreedyScheduler:
@@ -74,10 +17,8 @@ class GreedyScheduler:
         2. 为每个空闲且电量充足（>=20%）的无人机分配一个离当前位置最近的任务
         返回: {drone_index: [assigned_task_id]} 字典（每个无人机最多分配一个任务）
         """
-        from drone import BATTERY_LOW_THRESHOLD
-
         drone_positions = observation['drone_positions']
-        unassigned_tasks_info = observation['unassigned_tasks']
+        unassigned_tasks_info = list(observation['unassigned_tasks'])
         drone_free_masks = observation['drone_free_masks']
 
         if not unassigned_tasks_info:
@@ -130,28 +71,28 @@ class GreedyScheduler:
         
         # 创建观察空间字典
         observation = {
-            'unassigned_tasks': unassigned_tasks_info
+            'drone_positions': [list(d.get_position()) for d in drones],
+            'drone_free_masks': [[d.is_free for _ in unassigned_tasks_info] for d in drones],
+            'unassigned_tasks': unassigned_tasks_info,
         }
-        
-        for drone in drones:
-            # 获取分配的任务ID
-            assigned_task_ids = GreedyScheduler.schedule_for_drone(observation)
-            
-            # 从原始任务列表中找到对应的Task对象
-            assigned_tasks = []
-            for task_id in assigned_task_ids:
-                for task in unassigned_tasks[:]:  # 使用切片复制避免修改时的问题
-                    if task.task_id == task_id:
-                        assigned_tasks.append(task)
-                        unassigned_tasks.remove(task)
-                        break
-            
+
+        task_id_map = {task.task_id: task for task in unassigned_tasks}
+        id_assignments = GreedyScheduler.schedule_for_drone(observation)
+
+        for drone_idx, task_ids in id_assignments.items():
+            if drone_idx >= len(drones):
+                continue
+            drone = drones[drone_idx]
+            assigned_tasks = [task_id_map[tid] for tid in task_ids if tid in task_id_map]
             assignments[drone] = assigned_tasks
-            
-            # 为无人机设置路线
+
             if assigned_tasks:
                 route = [drone.get_position()] + [t.get_destination() for t in assigned_tasks]
-                task_id = assigned_tasks[0].task_id  # 传入当前执行的任务ID
-                drone.schedule_route(route, task_id)
+                drone.schedule_route(route, assigned_tasks[0].task_id)
         
         return assignments
+
+
+def greedy_action_from_observation(observation):
+    """Callable greedy policy entry for both frontend and backend usage."""
+    return GreedyScheduler.schedule_for_drone(observation)
