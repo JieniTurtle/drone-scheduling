@@ -1,0 +1,119 @@
+{
+  "artifacts": [],
+  "command": "my_main",
+  "experiment": {
+    "base_dir": "D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\backend-wx\\pymarl-master\\src",
+    "dependencies": [
+      "numpy==1.26.4",
+      "pyyaml==6.0.3",
+      "sacred==0.8.4",
+      "torch==2.1.0"
+    ],
+    "mainfile": "main.py",
+    "name": "pymarl",
+    "repositories": [
+      {
+        "commit": "c4375f4747695fea11f2fb325f491af228138a4a",
+        "dirty": false,
+        "url": "https://github.com/JieniTurtle/drone-scheduling"
+      },
+      {
+        "commit": "c4375f4747695fea11f2fb325f491af228138a4a",
+        "dirty": false,
+        "url": "https://github.com/JieniTurtle/drone-scheduling"
+      },
+      {
+        "commit": "c4375f4747695fea11f2fb325f491af228138a4a",
+        "dirty": false,
+        "url": "https://github.com/JieniTurtle/drone-scheduling"
+      }
+    ],
+    "sources": [
+      [
+        "main.py",
+        "_sources\\main_65026ac6d18fe0954fda1186831cc2af.py"
+      ],
+      [
+        "run.py",
+        "_sources\\run_7911ddab0b7ff30dd1480a75183ffc39.py"
+      ],
+      [
+        "utils\\logging.py",
+        "_sources\\logging_9589a3d14b72bc48a227a2841de9482e.py"
+      ]
+    ]
+  },
+  "fail_trace": [
+    "Traceback (most recent call last):\n",
+    "  File \"D:\\Anaconda\\envs\\citysim\\lib\\site-packages\\sacred\\config\\captured_function.py\", line 42, in captured_function\n    result = wrapped(*args, **kwargs)\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\backend-wx\\pymarl-master\\src\\main.py\", line 57, in my_main\n    run(_run, config, _log)\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\backend-wx\\pymarl-master\\src\\run.py\", line 48, in run\n    run_sequential(args=args, logger=logger)\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\backend-wx\\pymarl-master\\src\\run.py\", line 79, in run_sequential\n    runner = r_REGISTRY[args.runner](args=args, logger=logger)\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\backend-wx\\pymarl-master\\src\\runners\\episode_runner.py\", line 16, in __init__\n    self.env = env_REGISTRY[self.args.env](**self.args.env_args)\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\backend-wx\\pymarl-master\\src\\envs\\__init__.py\", line 9, in env_fn\n    return env(**kwargs)\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\backend-wx\\pymarl-master\\src\\envs\\env_drone.py\", line 35, in __init__\n    self._frontend_env = self._create_frontend_env()\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\backend-wx\\pymarl-master\\src\\envs\\env_drone.py\", line 76, in _create_frontend_env\n    return Environment(str(self._map_path), visualize=False)\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\frontend\\environment.py\", line 21, in __init__\n    _, buildings_with_height = load_map_data(osm_file_path)\n",
+    "  File \"D:\\\u8bfe\u7a0b\\\u5927\u4e09\u4e0b\\\u4e13\u4e1a\u65b9\u5411\u7efc\u5408\u9879\u76ee\\drone-scheduling\\frontend\\tools\\osm.py\", line 12, in load_map_data\n    print(\"Loading map data...\")\n",
+    "OSError: [WinError 1] \u51fd\u6570\u4e0d\u6b63\u786e\u3002\n"
+  ],
+  "heartbeat": "2026-04-23T06:33:56.687520",
+  "host": {
+    "ENV": {},
+    "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+    "hostname": "\u6c34\u624b155",
+    "os": [
+      "Windows",
+      "Windows-10-10.0.26200-SP0"
+    ],
+    "python_version": "3.10.20"
+  },
+  "meta": {
+    "command": "my_main",
+    "config_updates": {
+      "save_model": false,
+      "t_max": 20,
+      "test_interval": 999999,
+      "use_cuda": false,
+      "use_tensorboard": false
+    },
+    "named_configs": [],
+    "options": {
+      "--beat-interval": null,
+      "--capture": null,
+      "--comment": null,
+      "--debug": false,
+      "--enforce_clean": false,
+      "--file_storage": null,
+      "--force": false,
+      "--help": false,
+      "--id": null,
+      "--loglevel": null,
+      "--mongo_db": null,
+      "--name": null,
+      "--pdb": false,
+      "--print-config": false,
+      "--priority": null,
+      "--queue": false,
+      "--s3": null,
+      "--sql": null,
+      "--tiny_db": null,
+      "--unobserved": false,
+      "COMMAND": null,
+      "UPDATE": [
+        "use_cuda=False",
+        "t_max=20",
+        "test_interval=999999",
+        "save_model=False",
+        "use_tensorboard=False"
+      ],
+      "help": false,
+      "with": true
+    }
+  },
+  "resources": [],
+  "result": null,
+  "start_time": "2026-04-23T06:33:54.928558",
+  "status": "FAILED",
+  "stop_time": "2026-04-23T06:33:56.695901"
+}

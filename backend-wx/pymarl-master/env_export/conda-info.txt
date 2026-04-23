@@ -1,0 +1,32 @@
+
+     active environment : None
+       user config file : /root/.condarc
+ populated config files : /root/.condarc
+          conda version : 4.10.3
+    conda-build version : not installed
+         python version : 3.8.10.final.0
+       virtual packages : __linux=5.15.0=0
+                          __glibc=2.31=0
+                          __unix=0=0
+                          __archspec=1=x86_64
+       base environment : /root/miniconda3  (writable)
+      conda av data dir : /root/miniconda3/etc/conda
+  conda av metadata url : None
+           channel URLs : https://mirrors.ustc.edu.cn/anaconda/pkgs/main/linux-64
+                          https://mirrors.ustc.edu.cn/anaconda/pkgs/main/noarch
+                          https://mirrors.ustc.edu.cn/anaconda/pkgs/free/linux-64
+                          https://mirrors.ustc.edu.cn/anaconda/pkgs/free/noarch
+                          https://repo.anaconda.com/pkgs/main/linux-64
+                          https://repo.anaconda.com/pkgs/main/noarch
+                          https://repo.anaconda.com/pkgs/r/linux-64
+                          https://repo.anaconda.com/pkgs/r/noarch
+          package cache : /root/miniconda3/pkgs
+                          /root/.conda/pkgs
+       envs directories : /root/miniconda3/envs
+                          /root/.conda/envs
+               platform : linux-64
+             user-agent : conda/4.10.3 requests/2.28.2 CPython/3.8.10 Linux/5.15.0-86-generic ubuntu/20.04.5 glibc/2.31
+                UID:GID : 0:0
+             netrc file : None
+           offline mode : False
+

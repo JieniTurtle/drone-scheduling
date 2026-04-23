@@ -1,0 +1,7 @@
+env: "env_drone"
+
+env_args:
+  episode_limit: 200
+  max_tasks: 20
+  max_remaining_time: 500.0
+  map_relative_path: "data/map/part_of_yangpu.osm"

@@ -1,0 +1,9 @@
+name: base
+channels:
+  - https://mirrors.ustc.edu.cn/anaconda/pkgs/main/
+  - https://mirrors.ustc.edu.cn/anaconda/pkgs/free/
+  - defaults
+dependencies:
+  - conda
+  - python=3.8
+prefix: /root/miniconda3
