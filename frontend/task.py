@@ -1,11 +1,13 @@
 import random
 
-from config import get_frontend_config
+from config.settings import get_shared_config
 
 
-WAREHOUSE_ROUTE_ID = "1364970737#0"
-CHARGER_ROUTE_ID = "125465016"
-WAREHOUSE_POS = (357600.574872369, 3462308.772003661)
+_TASK_CFG = get_shared_config().get("task", {})
+WAREHOUSE_ROUTE_ID = _TASK_CFG.get("warehouse_route_id", "1364970737#0")
+CHARGER_ROUTE_ID = _TASK_CFG.get("charger_route_id", "125465016")
+_warehouse_pos = _TASK_CFG.get("warehouse_pos", [357600.574872369, 3462308.772003661])
+WAREHOUSE_POS = (float(_warehouse_pos[0]), float(_warehouse_pos[1]))
 
 class Task:
     def __init__(self, task_id, weight, source, destination, deadline=None, priority=1, generation_time=None):
@@ -97,7 +99,7 @@ class TaskGenerator:
     """任务生成器，统一封装任务生成逻辑。"""
 
     def __init__(self, possible_destinations=None, file_path=None):
-        cfg = get_frontend_config().get("task", {})
+        cfg = get_shared_config().get("task", {})
         if file_path is None:
             file_path = cfg.get("clicked_positions_file", "clicked_positions.txt")
 

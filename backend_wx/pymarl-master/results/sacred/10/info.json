@@ -1,0 +1,56 @@
+{
+  "avg_delay_mean": [
+    62.40909090909091
+  ],
+  "avg_delay_mean_T": [
+    1200
+  ],
+  "completion_rate_mean": [
+    0.7333333333333333
+  ],
+  "completion_rate_mean_T": [
+    1200
+  ],
+  "ep_length_mean": [
+    1200.0
+  ],
+  "ep_length_mean_T": [
+    1200
+  ],
+  "episode_limit_mean": [
+    1.0
+  ],
+  "episode_limit_mean_T": [
+    1200
+  ],
+  "epsilon": [
+    1.0
+  ],
+  "epsilon_T": [
+    1200
+  ],
+  "noop_fastpath_steps_mean": [
+    1171.0
+  ],
+  "noop_fastpath_steps_mean_T": [
+    1200
+  ],
+  "on_time_rate_mean": [
+    0.6363636363636364
+  ],
+  "on_time_rate_mean_T": [
+    1200
+  ],
+  "return_mean": [
+    -12480.000000000024
+  ],
+  "return_mean_T": [
+    1200
+  ],
+  "return_std": [
+    0.0
+  ],
+  "return_std_T": [
+    1200
+  ]
+}

@@ -5,6 +5,8 @@ import numpy as np
 import torch as th
 import csv
 import os
+from pathlib import Path
+import json
 
 
 class EpisodeRunner:
@@ -25,7 +27,8 @@ class EpisodeRunner:
         self.test_returns = []
         self.train_stats = {}
         self.test_stats = {}
-        self.metrics_file = os.path.join(self.args.local_results_path, "env_metrics.csv")
+        self.episode_id = 0
+        self.metrics_file = self._resolve_metrics_file()
         self._metrics_header_written = False
 
         # Log the first run
@@ -54,6 +57,7 @@ class EpisodeRunner:
         if hasattr(self.env, "set_test_mode"):
             self.env.set_test_mode(test_mode)
         self.reset()
+        self.episode_id += 1
 
         terminated = False
         episode_return = 0
@@ -170,12 +174,29 @@ class EpisodeRunner:
         with open(self.metrics_file, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if need_header:
-                writer.writerow(["t_env", "mode", "completion_rate", "on_time_rate", "avg_delay"])
+                writer.writerow(["source", "episode", "t_env", "mode", "completion_rate", "on_time_rate", "avg_delay"])
                 self._metrics_header_written = True
             writer.writerow([
+                "backend_wx",
+                int(self.episode_id),
                 int(self.t_env),
                 mode,
                 float(env_info["completion_rate"]),
                 float(env_info["on_time_rate"]),
                 float(env_info["avg_delay"]),
             ])
+
+    def _resolve_metrics_file(self):
+        project_root = Path(__file__).resolve().parents[4]
+        shared_cfg_path = project_root / "config" / "simulation.json"
+        compare_dir = project_root / "results" / "compare"
+        filename = "backend_wx_metrics.csv"
+
+        if shared_cfg_path.exists():
+            with open(shared_cfg_path, "r", encoding="utf-8") as f:
+                shared_cfg = json.load(f)
+            metrics_cfg = shared_cfg.get("metrics", {})
+            compare_dir = project_root / metrics_cfg.get("compare_dir", "results/compare")
+            filename = metrics_cfg.get("backend_wx_file", "backend_wx_metrics.csv")
+
+        return str(compare_dir / filename)

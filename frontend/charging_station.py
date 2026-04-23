@@ -1,4 +1,4 @@
-from config import get_frontend_config
+from config.settings import get_shared_config
 
 
 class ChargingStation:
@@ -15,7 +15,7 @@ class ChargingStation:
 
 
 def build_default_charging_station():
-    cfg = get_frontend_config().get("charging_station", {})
+    cfg = get_shared_config().get("charging_station", {})
     return ChargingStation(
         station_id=int(cfg.get("station_id", 0)),
         x=float(cfg.get("x", 356000.0)),

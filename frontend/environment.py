@@ -6,7 +6,7 @@ import datetime
 from shapely.geometry import Point, LineString
 import math
 from drone import Drone
-from config import get_frontend_config
+from config.settings import get_shared_config
 # from test import OptimizedMapViewer
 from tools.osm import load_map_data, get_building_location_by_name, get_global_bounds
 from task import TaskGenerator
@@ -14,7 +14,7 @@ from map_drawer import OptimizedMapViewer
 from task import WAREHOUSE_POS
 
 
-CFG = get_frontend_config()
+CFG = get_shared_config()
 ENV_CFG = CFG.get("environment", {})
 MAX_UNASSIGNED_TASKS = int(ENV_CFG.get("max_unassigned_tasks", 5))
 DEFAULT_EPISODE_MAX_STEPS = int(ENV_CFG.get("episode_max_steps", 1200))

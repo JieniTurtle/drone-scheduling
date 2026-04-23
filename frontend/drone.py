@@ -1,30 +1,24 @@
 import math
 import random
+from config.settings import get_shared_config
 from charging_station import DEFAULT_CHARGING_STATION
 
 
-# ==================== 电池系统常量 ====================
-BATTERY_CAPACITY = 15000.0  # 电池最大容量 (Wh)，足够大，确保20%电量能完成任意订单
-BATTERY_CONSUMPTION_BASE = 0.5  # 飞行基础功耗 (Wh/m)
-BATTERY_LOAD_PENALTY_FACTOR = 0.3  # 载重惩罚系数（满载时额外消耗比例）
-BATTERY_LOW_THRESHOLD = 0.2  # 低电量阈值，低于此值无法接单
+_DRONE_CFG = get_shared_config().get("drone", {})
 
-# ==================== 订单生成密集点 ====================
-# 从 clicked_positions.txt 中选取的点
-ORDER_HOTSPOTS = [
-    (358919.252551, 3463875.611049),
-    (359006.728578, 3464942.818570),
-    (358639.329267, 3462878.384349),
-    (357545.878938, 3463569.444957),
-    (359365.380286, 3463070.831606),
-    (357983.023875, 3462464.936166),
-    (359505.341928, 3464487.943233),
-]
+# ==================== 电池系统常量 ====================
+BATTERY_CAPACITY = float(_DRONE_CFG.get("battery_capacity", 15000.0))
+BATTERY_CONSUMPTION_BASE = float(_DRONE_CFG.get("battery_consumption_base", 0.5))
+BATTERY_LOAD_PENALTY_FACTOR = float(_DRONE_CFG.get("battery_load_penalty_factor", 0.3))
+BATTERY_LOW_THRESHOLD = float(_DRONE_CFG.get("battery_low_threshold", 0.2))
+DRONE_SPEED = float(_DRONE_CFG.get("speed", 200.0))
+DRONE_TIME_STEP = float(_DRONE_CFG.get("time_step", 0.1))
+DEFAULT_CARRYING_CAPACITY = int(_DRONE_CFG.get("carrying_capacity", 5))
 
 
 # ==================== 无人机类 ====================
 class Drone:
-    def __init__(self, x, y, drone_id="drone_0", carrying_capacity=5,
+    def __init__(self, x, y, drone_id="drone_0", carrying_capacity=None,
                  battery_capacity=BATTERY_CAPACITY):
         # 位置信息
         self.x = x
@@ -33,7 +27,7 @@ class Drone:
         self.home_position = (x, y)  # 记录出发点位置（用于返回装货）
         
         # 载重信息
-        self.carrying_capacity = carrying_capacity
+        self.carrying_capacity = carrying_capacity if carrying_capacity is not None else DEFAULT_CARRYING_CAPACITY
         self.current_load = 0  # 当前载重
         
         # 任务信息
@@ -145,7 +139,9 @@ class Drone:
         return self.carrying_capacity - self.current_load
 
     def update(self, time_step=0.1):
-        v = 200  # 速度，值越大移动越快
+        if time_step is None:
+            time_step = DRONE_TIME_STEP
+        v = DRONE_SPEED
         max_distance = v * time_step
         
         # 如果正在充电，不移动，只充电
