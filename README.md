@@ -68,7 +68,7 @@ python evaluate_metrics.py --policy pso --episodes 5 --episode-steps 1200
 
 ```powershell
 cd backend_wx/pymarl-master/src
-python main.py --config=qmix --env-config=env_drone with use_cuda=False
+python main.py --config=qmix --env-config=env_drone
 ```
 
 快速烟测（建议先跑）：
@@ -93,8 +93,7 @@ python --config=qmix --env-config=env_drone with use_cuda=False t_max=10 test_in
 在项目根目录执行：
 
 ```powershell
-Set-Location ..  # 如果你当前在子目录，切回项目根目录
-D:/Anaconda/envs/citysim/python.exe compare_metrics.py
+python compare_metrics.py
 ```
 
 输出会汇总三种方法的：

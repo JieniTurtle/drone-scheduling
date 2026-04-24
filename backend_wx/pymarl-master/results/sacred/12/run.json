@@ -13,17 +13,17 @@
     "name": "pymarl",
     "repositories": [
       {
-        "commit": "8f37e89257c6539f03629f15384eae1b2b177424",
+        "commit": "67e5dbb491af38333e46e461808b1cc95ec1ba2f",
         "dirty": true,
         "url": "https://github.com/JieniTurtle/drone-scheduling"
       },
       {
-        "commit": "8f37e89257c6539f03629f15384eae1b2b177424",
+        "commit": "67e5dbb491af38333e46e461808b1cc95ec1ba2f",
         "dirty": true,
         "url": "https://github.com/JieniTurtle/drone-scheduling"
       },
       {
-        "commit": "8f37e89257c6539f03629f15384eae1b2b177424",
+        "commit": "67e5dbb491af38333e46e461808b1cc95ec1ba2f",
         "dirty": true,
         "url": "https://github.com/JieniTurtle/drone-scheduling"
       }
@@ -43,10 +43,20 @@
       ]
     ]
   },
-  "heartbeat": "2026-04-23T14:22:28.624904",
+  "heartbeat": "2026-04-24T11:59:08.295348",
   "host": {
     "ENV": {},
     "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
+    "gpus": {
+      "driver_version": "581.95",
+      "gpus": [
+        {
+          "model": "NVIDIA GeForce RTX 3090",
+          "persistence_mode": false,
+          "total_memory": 24576
+        }
+      ]
+    },
     "hostname": "\u6c34\u624b155",
     "os": [
       "Windows",
@@ -56,13 +66,7 @@
   },
   "meta": {
     "command": "my_main",
-    "config_updates": {
-      "save_model": false,
-      "t_max": 10,
-      "test_interval": 999999,
-      "use_cuda": false,
-      "use_tensorboard": false
-    },
+    "config_updates": {},
     "named_configs": [],
     "options": {
       "--beat-interval": null,
@@ -86,19 +90,13 @@
       "--tiny_db": null,
       "--unobserved": false,
       "COMMAND": null,
-      "UPDATE": [
-        "use_cuda=False",
-        "t_max=10",
-        "test_interval=999999",
-        "save_model=False",
-        "use_tensorboard=False"
-      ],
+      "UPDATE": [],
       "help": false,
-      "with": true
+      "with": false
     }
   },
   "resources": [],
   "result": null,
-  "start_time": "2026-04-23T14:22:18.611911",
+  "start_time": "2026-04-24T11:46:57.594748",
   "status": "RUNNING"
 }

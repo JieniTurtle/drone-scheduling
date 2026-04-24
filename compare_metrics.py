@@ -38,6 +38,36 @@ def _mean(rows, key):
     return sum(vals) / len(vals)
 
 
+def _to_float(row, key, default=0.0):
+    try:
+        return float(row.get(key, default))
+    except Exception:
+        return float(default)
+
+
+def _best_test_row(source, rows):
+    if not rows:
+        return None
+
+    # backend_wx has explicit train/test split; others are evaluation rows and treated as test.
+    if source == "backend_wx":
+        test_rows = [r for r in rows if str(r.get("mode", "")).lower() == "test"]
+        if not test_rows:
+            return None
+    else:
+        test_rows = rows
+
+    # Higher completion_rate is better, then higher on_time_rate, then lower avg_delay.
+    return max(
+        test_rows,
+        key=lambda r: (
+            _to_float(r, "completion_rate"),
+            _to_float(r, "on_time_rate"),
+            -_to_float(r, "avg_delay"),
+        ),
+    )
+
+
 def main():
     project_root = Path(__file__).resolve().parent
     paths = _load_paths(project_root)
@@ -45,14 +75,31 @@ def main():
     print("=" * 72)
     print("Metrics Comparison")
     print("=" * 72)
-    print("source, episodes, completion_rate_mean, on_time_rate_mean, avg_delay_mean")
+    print("source, test_rows, best_completion_rate, best_on_time_rate, best_avg_delay")
 
     for source, path in paths.items():
         rows = _read_rows(path)
+        best = _best_test_row(source, rows)
+        if best is None:
+            print(f"{source}, 0, 0.0000, 0.0000, 0.0000")
+            print(f"  file: {path}")
+            continue
+
+        if source == "backend_wx":
+            test_rows = [r for r in rows if str(r.get("mode", "")).lower() == "test"]
+        else:
+            test_rows = rows
+
         print(
-            f"{source}, {len(rows)}, {_mean(rows, 'completion_rate'):.4f}, "
-            f"{_mean(rows, 'on_time_rate'):.4f}, {_mean(rows, 'avg_delay'):.4f}"
+            f"{source}, {len(test_rows)}, {_to_float(best, 'completion_rate'):.4f}, "
+            f"{_to_float(best, 'on_time_rate'):.4f}, {_to_float(best, 'avg_delay'):.4f}"
         )
+        extra = []
+        for k in ("episode", "t_env", "mode"):
+            if k in best and str(best.get(k)) != "":
+                extra.append(f"{k}={best.get(k)}")
+        if extra:
+            print(f"  best_row: {', '.join(extra)}")
         print(f"  file: {path}")
 
     print("=" * 72)
