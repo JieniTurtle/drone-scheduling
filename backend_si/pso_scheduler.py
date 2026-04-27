@@ -17,71 +17,72 @@ from typing import List, Dict, Tuple, Optional
 
 
 class Particle:
-    """粒子类，表示一个调度方案"""
-    
-    def __init__(self, num_drones: int, num_tasks: int):
+    """
+    粒子类：
+      position  ∈ R^(num_tasks, num_drones) 实值偏好矩阵
+      assignment[i] = argmax_d position[i, d] 得到任务 i 分配的无人机
+    """
+
+    def __init__(self,
+                 num_drones: int,
+                 num_tasks: int,
+                 v_max: float = 4.0,
+                 pos_max: float = 5.0):
         """
-        初始化粒子
         :param num_drones: 无人机数量
         :param num_tasks: 任务数量
+        :param v_max: velocity 每个分量的绝对值上限
+        :param pos_max: position 每个分量的绝对值上限（防数值发散）
         """
         self.num_drones = num_drones
         self.num_tasks = num_tasks
-        
-        # 位置：任务到无人机的分配 [task_id -> drone_id]
-        self.position = np.random.randint(0, num_drones, num_tasks)
-        
-        # 速度：用于更新位置
-        self.velocity = np.random.uniform(-1, 1, num_tasks)
-        
-        # 个体最优位置和适应度
+        self.v_max = v_max
+        self.pos_max = pos_max
+
+        # 偏好矩阵 [task, drone]，连续实值
+        self.position = np.random.uniform(-1.0, 1.0, (num_tasks, num_drones))
+        self.velocity = np.random.uniform(-0.5, 0.5, (num_tasks, num_drones))
+
+        # 个体最优快照（完整偏好矩阵，不是 assignment 向量）
         self.best_position = self.position.copy()
         self.best_fitness = float('-inf')
-        
+
         # 当前适应度
         self.fitness = float('-inf')
-    
+
     def update_velocity(self, global_best_position, w=0.7, c1=1.5, c2=1.5):
         """
-        更新粒子速度
-        :param global_best_position: 全局最优位置
-        :param w: 惯性权重
-        :param c1: 个体学习因子
-        :param c2: 社会学习因子
+        标准连续 PSO 速度更新（在偏好矩阵上做元素级运算）
+        :param global_best_position: 全局最优偏好矩阵 (num_tasks, num_drones)
         """
-        r1 = np.random.random(self.num_tasks)
-        r2 = np.random.random(self.num_tasks)
-        
-        # PSO速度更新公式
+        r1 = np.random.random((self.num_tasks, self.num_drones))
+        r2 = np.random.random((self.num_tasks, self.num_drones))
+
         cognitive = c1 * r1 * (self.best_position - self.position)
         social = c2 * r2 * (global_best_position - self.position)
         self.velocity = w * self.velocity + cognitive + social
-        
-        # 限制速度范围
-        self.velocity = np.clip(self.velocity, -4, 4)
-    
+
+        self.velocity = np.clip(self.velocity, -self.v_max, self.v_max)
+
     def update_position(self):
-        """更新粒子位置（离散化处理）"""
-        # 使用sigmoid函数将速度映射到概率
-        sigmoid = 1 / (1 + np.exp(-self.velocity))
-        
-        # 根据概率决定是否改变分配
-        for i in range(self.num_tasks):
-            if np.random.random() < sigmoid[i]:
-                # 随机选择一个新的无人机
-                self.position[i] = np.random.randint(0, self.num_drones)
+        """位置更新：偏好矩阵直接累加 velocity，clip 防发散"""
+        self.position = self.position + self.velocity
+        self.position = np.clip(self.position, -self.pos_max, self.pos_max)
 
 
 class PSOOptimizer:
     """粒子群优化算法核心：给定无人机集合和任务集合，输出 task→drone 分配"""
     
-    def __init__(self, 
+    def __init__(self,
                  num_particles=30,
                  max_iterations=50,
                  w=0.7,
                  c1=1.5,
                  c2=1.5,
-                 weights: Optional[Dict[str, float]] = None):
+                 v_max: float = 4.0,
+                 pos_max: float = 5.0,
+                 weights: Optional[Dict[str, float]] = None,
+                 seed: Optional[int] = None):
         """
         初始化PSO调度器
         :param num_particles: 粒子数量
@@ -89,14 +90,23 @@ class PSOOptimizer:
         :param w: 惯性权重
         :param c1: 个体学习因子
         :param c2: 社会学习因子
+        :param v_max: 粒子 velocity 每个分量的绝对值上限
+        :param pos_max: 粒子 position 每个分量的绝对值上限（防数值发散）
         :param weights: 适应度函数权重字典，支持扩展
                        默认: {'on_time_rate': 0.4, 'avg_delay': 0.4, 'energy': 0.2}
+        :param seed: 随机数种子，用于实验可复现性
         """
         self.num_particles = num_particles
         self.max_iterations = max_iterations
         self.w = w
         self.c1 = c1
         self.c2 = c2
+        self.v_max = v_max
+        self.pos_max = pos_max
+        
+        # 设置随机数种子
+        if seed is not None:
+            np.random.seed(seed)
         
         # 适应度函数权重（可扩展）
         if weights is None:
@@ -127,14 +137,14 @@ class PSOOptimizer:
         """
         return distance / speed
     
-    def evaluate_fitness(self, 
+    def evaluate_fitness(self,
                         position: np.ndarray,
                         drones_info: List[Dict],
                         tasks_info: List[Dict],
                         current_time: float) -> Tuple[float, Dict[str, float]]:
         """
         评估适应度函数（支持多目标优化和扩展）
-        :param position: 粒子位置（任务分配方案）
+        :param position: 粒子偏好矩阵 (num_tasks, num_drones)；内部 argmax 解码出分配
         :param drones_info: 无人机信息列表
         :param tasks_info: 任务信息列表
         :param current_time: 当前时间
@@ -142,11 +152,14 @@ class PSOOptimizer:
         """
         num_tasks = len(tasks_info)
         num_drones = len(drones_info)
-        
+
+        # 偏好矩阵 → 任务到无人机的离散分配
+        assignment = np.argmax(position, axis=1)
+
         # 为每个无人机分配任务
         drone_tasks = [[] for _ in range(num_drones)]
-        for task_idx, drone_idx in enumerate(position):
-            drone_tasks[drone_idx].append(task_idx)
+        for task_idx, drone_idx in enumerate(assignment):
+            drone_tasks[int(drone_idx)].append(task_idx)
         
         # 计算各项指标
         on_time_count = 0
@@ -269,8 +282,11 @@ class PSOOptimizer:
         if num_tasks == 0:
             return {}, {'message': 'No tasks to schedule'}
         
-        # 初始化粒子群
-        self.particles = [Particle(num_drones, num_tasks) for _ in range(self.num_particles)]
+        # 初始化粒子群（每个粒子都持有自己的 (num_tasks, num_drones) 偏好矩阵）
+        self.particles = [
+            Particle(num_drones, num_tasks, v_max=self.v_max, pos_max=self.pos_max)
+            for _ in range(self.num_particles)
+        ]
         self.global_best_position = None
         self.global_best_fitness = float('-inf')
         self.fitness_history = []
@@ -330,8 +346,8 @@ class PSOOptimizer:
                              drones_info: List[Dict],
                              tasks_info: List[Dict]) -> Dict[int, List[str]]:
         """
-        根据粒子位置生成调度方案
-        :param position: 粒子位置
+        根据粒子位置（偏好矩阵）生成调度方案
+        :param position: 偏好矩阵 (num_tasks, num_drones)，先 argmax 解码
         :param drones_info: 无人机信息
         :param tasks_info: 任务信息
         :return: {drone_index: [task_id_list]}
@@ -339,9 +355,10 @@ class PSOOptimizer:
         num_drones = len(drones_info)
         assignments = {i: [] for i in range(num_drones)}
 
-        for task_idx, drone_idx in enumerate(position):
+        assignment = np.argmax(position, axis=1)
+        for task_idx, drone_idx in enumerate(assignment):
             task_id = tasks_info[task_idx]['task_id']
-            assignments[drone_idx].append(task_id)
+            assignments[int(drone_idx)].append(task_id)
 
         return assignments
 
@@ -370,7 +387,8 @@ class PSOScheduler:
     def __init__(self,
                  num_drones: int,
                  config_path: Optional[str] = None,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 seed: Optional[int] = None):
         self.num_drones = num_drones
         self.verbose = verbose
         self.config = self._load_config(config_path or DEFAULT_CONFIG_PATH)
@@ -387,10 +405,20 @@ class PSOScheduler:
         self.pso_inertia = pso_cfg['inertia']
         self.pso_cognitive = pso_cfg['cognitive']
         self.pso_social = pso_cfg['social']
+        # 方案 A 偏好矩阵编码新增参数（向后兼容旧 config 缺失的情况）
+        self.pso_v_max = pso_cfg.get('v_max', 4.0)
+        self.pso_pos_max = pso_cfg.get('pos_max', 5.0)
 
         self.fitness_weights = dict(self.config['fitness_weights'])
         self.greedy_weights = dict(self.config['dynamic_greedy'])
         self.drone_capacity = self.config['drone']['capacity']
+        
+        # 随机数种子（优先使用参数，其次使用配置文件，最后不设置）
+        if seed is None:
+            seed = self.config.get('seed')
+        self.seed = seed
+        if self.seed is not None:
+            np.random.seed(self.seed)
 
         # 运行时状态
         self.drone_queues: Dict[int, List[Dict]] = {i: [] for i in range(num_drones)}
@@ -547,7 +575,10 @@ class PSOScheduler:
             w=self.pso_inertia,
             c1=self.pso_cognitive,
             c2=self.pso_social,
+            v_max=self.pso_v_max,
+            pos_max=self.pso_pos_max,
             weights=self.fitness_weights,
+            seed=self.seed,
         )
         assignments, _ = optimizer.optimize(
             drones_info, tasks_info, current_time=current_time, verbose=False
