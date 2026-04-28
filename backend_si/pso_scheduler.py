@@ -82,7 +82,11 @@ class PSOOptimizer:
                  v_max: float = 4.0,
                  pos_max: float = 5.0,
                  weights: Optional[Dict[str, float]] = None,
-                 seed: Optional[int] = None):
+                 seed: Optional[int] = None,
+                 battery_consumption_base: float = 0.5,
+                 battery_load_penalty_factor: float = 0.3,
+                 battery_low_threshold: float = 0.2,
+                 env_step_seconds: float = 0.1):
         """
         初始化PSO调度器
         :param num_particles: 粒子数量
@@ -95,6 +99,13 @@ class PSOOptimizer:
         :param weights: 适应度函数权重字典，支持扩展
                        默认: {'on_time_rate': 0.4, 'avg_delay': 0.4, 'energy': 0.2}
         :param seed: 随机数种子，用于实验可复现性
+        :param battery_consumption_base: 单位距离基础耗电（与 frontend/drone.py 保持一致）
+        :param battery_load_penalty_factor: 满载相对空载的耗电增量比例
+        :param battery_low_threshold: 低电量阈值（占容量比例），低于则触发去充电站
+        :param env_step_seconds: 1 个 env-step 对应的真实秒数（与 frontend/drone.py
+                                 中 DRONE_TIME_STEP 同义；用于把 drone 的"米/秒"、
+                                 充电站的"Wh/秒"换算到 env-step 量纲，使 fitness
+                                 累计时间与 deadline / current_time 同口径）
         """
         self.num_particles = num_particles
         self.max_iterations = max_iterations
@@ -103,17 +114,26 @@ class PSOOptimizer:
         self.c2 = c2
         self.v_max = v_max
         self.pos_max = pos_max
-        
+
+        # 电量参数（与 frontend/drone.py 中的常量一一对应）
+        self.battery_consumption_base = battery_consumption_base
+        self.battery_load_penalty_factor = battery_load_penalty_factor
+        self.battery_low_threshold = battery_low_threshold
+
+        # 时间单位换算：fitness 内累计的"时间"必须与 deadline / current_time 同为
+        # env-step；drone 速度以"米/秒"给出，env-step 长度 = env_step_seconds 秒
+        self.env_step_seconds = env_step_seconds
+
         # 设置随机数种子
         if seed is not None:
             np.random.seed(seed)
-        
+
         # 适应度函数权重（可扩展）
         if weights is None:
             self.weights = {
                 'on_time_rate': 0.4,    # 准时率权重
                 'avg_delay': 0.4,        # 平均时延权重
-                'energy': 0.2            # 预留：能耗权重
+                'energy': 0.2            # 能耗权重
             }
         else:
             self.weights = weights
@@ -130,12 +150,28 @@ class PSOOptimizer:
     
     def calculate_travel_time(self, distance: float, speed: float = 200.0) -> float:
         """
-        计算飞行时间
-        :param distance: 距离
-        :param speed: 无人机速度（与environment.py中保持一致）
-        :return: 时间步数
+        计算飞行 distance 所需的 env-step 数。
+
+        说明：speed 是"米/秒"，env-step 时长 = self.env_step_seconds 秒，
+        所以一个 env-step 内 drone 实际飞 speed * env_step_seconds 米。
+        返回值与 environment 的 current_time / task.deadline 同口径。
         """
-        return distance / speed
+        denom = speed * self.env_step_seconds
+        if denom <= 0:
+            return 0.0
+        return distance / denom
+
+    def _battery_consumption(self, distance: float, current_load: float,
+                             carrying_capacity: float) -> float:
+        """
+        计算飞行 distance 后消耗的电量（Wh），与 frontend/drone.py:consume_battery 保持一致：
+            消耗 = distance * BASE * (1 + (load / capacity) * LOAD_PENALTY_FACTOR)
+        """
+        if carrying_capacity <= 0:
+            load_factor = 0.0
+        else:
+            load_factor = (current_load / carrying_capacity) * self.battery_load_penalty_factor
+        return distance * self.battery_consumption_base * (1.0 + load_factor)
     
     def evaluate_fitness(self,
                         position: np.ndarray,
@@ -160,66 +196,102 @@ class PSOOptimizer:
         drone_tasks = [[] for _ in range(num_drones)]
         for task_idx, drone_idx in enumerate(assignment):
             drone_tasks[int(drone_idx)].append(task_idx)
-        
+
         # 计算各项指标
         on_time_count = 0
         total_delay = 0.0
         total_completion_time = 0.0
-        total_energy = 0.0  # 预留：能耗计算
-        
+        total_energy = 0.0  # 累积每架无人机消耗的电量（Wh）
+
+        # 用于能耗归一化：取首架无人机的电池容量为参考量级（所有无人机容量一致）
+        ref_battery_capacity = drones_info[0].get('battery_capacity', 15000.0) if drones_info else 15000.0
+
         for drone_idx, task_indices in enumerate(drone_tasks):
             if not task_indices:
                 continue
-            
-            drone_pos = tuple(drones_info[drone_idx]['position'])
-            drone_capacity = drones_info[drone_idx].get('capacity', 5)
+
+            drone_info = drones_info[drone_idx]
+            drone_pos = tuple(drone_info['position'])
+            drone_capacity = drone_info.get('capacity', 5)
+            battery_capacity = drone_info.get('battery_capacity', 15000.0)
+            current_battery = drone_info.get('battery', battery_capacity)
+            station_pos = tuple(drone_info.get('charging_station_position', drone_pos))
+            charging_power = drone_info.get('charging_power', 50.0)
+            warehouse_pos = tuple(drone_info.get('home_position', drone_pos))
+
             current_pos = drone_pos
             current_load = 0
             accumulated_time = current_time
-            
+
             # 按优先级排序任务（高优先级优先执行）
-            sorted_tasks = sorted(task_indices, 
-                                key=lambda idx: tasks_info[idx]['priority'], 
+            sorted_tasks = sorted(task_indices,
+                                key=lambda idx: tasks_info[idx]['priority'],
                                 reverse=True)
-            
+
             for task_idx in sorted_tasks:
                 task = tasks_info[task_idx]
                 task_weight = task['weight']
-                
+
+                # 任务开始前：若电量低于阈值，先去充电站补电（与 drone.py 中
+                # 任务结束后判断 is_low_battery → 飞往充电站的逻辑一致）
+                if (battery_capacity > 0
+                        and current_battery / battery_capacity < self.battery_low_threshold):
+                    dist_to_station = self.euclidean_distance(current_pos, station_pos)
+                    consumed = self._battery_consumption(
+                        dist_to_station, current_load, drone_capacity)
+                    current_battery = max(0.0, current_battery - consumed)
+                    total_energy += consumed
+                    accumulated_time += self.calculate_travel_time(dist_to_station)
+                    current_pos = station_pos
+                    # 充满电的耗时：drone.charge() 每个 env-step 充入
+                    # charging_power * env_step_seconds Wh，所以补满需要的 env-step 数 =
+                    # (capacity - battery) / (charging_power * env_step_seconds)
+                    charge_rate_per_step = charging_power * self.env_step_seconds
+                    if charge_rate_per_step > 0:
+                        accumulated_time += (battery_capacity - current_battery) / charge_rate_per_step
+                    current_battery = battery_capacity
+
                 # 检查载重，如果超载需要返回仓库
                 if current_load + task_weight > drone_capacity:
-                    # 返回仓库卸货
-                    warehouse_pos = tuple(drones_info[drone_idx].get('home_position', drone_pos))
                     return_distance = self.euclidean_distance(current_pos, warehouse_pos)
+                    consumed = self._battery_consumption(
+                        return_distance, current_load, drone_capacity)
+                    current_battery = max(0.0, current_battery - consumed)
+                    total_energy += consumed
                     accumulated_time += self.calculate_travel_time(return_distance)
-                    total_energy += return_distance * 0.01  # 预留：能耗计算
                     current_pos = warehouse_pos
                     current_load = 0
-                
+
                 # 飞往取货点
                 source = tuple(task['source'])
                 distance_to_source = self.euclidean_distance(current_pos, source)
+                consumed = self._battery_consumption(
+                    distance_to_source, current_load, drone_capacity)
+                current_battery = max(0.0, current_battery - consumed)
+                total_energy += consumed
                 accumulated_time += self.calculate_travel_time(distance_to_source)
-                total_energy += distance_to_source * 0.01
-                
+
                 # 装货
                 current_load += task_weight
                 current_pos = source
-                
-                # 飞往目的地
+
+                # 飞往目的地（载重提升 → 单位耗电增大）
                 destination = tuple(task['destination'])
                 distance_to_dest = self.euclidean_distance(source, destination)
+                consumed = self._battery_consumption(
+                    distance_to_dest, current_load, drone_capacity)
+                current_battery = max(0.0, current_battery - consumed)
+                total_energy += consumed
                 accumulated_time += self.calculate_travel_time(distance_to_dest)
-                total_energy += distance_to_dest * 0.01
-                
+
                 # 卸货
                 current_load -= task_weight
                 current_pos = destination
-                
+
                 # 计算完成时间和延迟
                 completion_time = accumulated_time
                 total_completion_time += completion_time
-                
+
                 deadline = task['deadline']
                 if deadline is not None and deadline != float('inf'):
                     delay = max(0, completion_time - deadline)
@@ -229,22 +301,26 @@ class PSOOptimizer:
                 else:
                     # 没有截止时间的任务视为准时
                     on_time_count += 1
-        
+
         # 计算各项指标
         on_time_rate = on_time_count / num_tasks if num_tasks > 0 else 0
         avg_delay = total_delay / num_tasks if num_tasks > 0 else 0
         avg_energy = total_energy / num_drones if num_drones > 0 else 0
-        
+
         # 归一化处理（将指标映射到[0, 1]区间）
         # 准时率：越高越好，已在[0, 1]
         normalized_on_time = on_time_rate
-        
+
         # 平均时延：越低越好，使用负指数函数归一化
         normalized_delay = math.exp(-avg_delay / 1000.0) if avg_delay > 0 else 1.0
-        
-        # 能耗：越低越好（预留）
-        normalized_energy = math.exp(-avg_energy / 100.0) if avg_energy > 0 else 1.0
-        
+
+        # 能耗：以电池容量为参考量级，平均每机消耗的电量越接近一整块电池得分越低；
+        # 超过一整块电池则得 0（强惩罚密集充电场景）
+        if ref_battery_capacity > 0:
+            normalized_energy = max(0.0, 1.0 - avg_energy / ref_battery_capacity)
+        else:
+            normalized_energy = 1.0
+
         # 加权求和计算总适应度
         fitness = (self.weights['on_time_rate'] * normalized_on_time +
                   self.weights['avg_delay'] * normalized_delay +
@@ -412,6 +488,16 @@ class PSOScheduler:
         self.fitness_weights = dict(self.config['fitness_weights'])
         self.greedy_weights = dict(self.config['dynamic_greedy'])
         self.drone_capacity = self.config['drone']['capacity']
+        # frontend Drone.update() 默认 time_step=0.1；fitness 中所有"时间"必须按
+        # env-step 累计才能与 deadline / current_time 同口径
+        self.env_step_seconds = float(self.config['drone'].get('time_step', 0.1))
+
+        # 电量参数（与 frontend/drone.py 中常量保持同名同义；缺省值即 drone.py 的默认值）
+        battery_cfg = self.config.get('battery', {})
+        self.battery_capacity = float(battery_cfg.get('capacity', 15000.0))
+        self.battery_consumption_base = float(battery_cfg.get('consumption_base', 0.5))
+        self.battery_load_penalty_factor = float(battery_cfg.get('load_penalty_factor', 0.3))
+        self.battery_low_threshold = float(battery_cfg.get('low_threshold', 0.2))
         
         # 随机数种子（优先使用参数，其次使用配置文件，最后不设置）
         if seed is None:
@@ -546,6 +632,16 @@ class PSOScheduler:
         self._flush_buffer_with_pso(observation, current_time, reason)
 
     def _flush_buffer_with_pso(self, observation, current_time, reason):
+        # 充电站位置与功率：优先用 observation 中暴露的字段（与实际仿真一致），
+        # 缺失时回退到第一架无人机的当前位置 / 默认充电功率
+        station_info = observation.get('charging_station', {}) or {}
+        station_pos = tuple(station_info.get('position',
+                                              observation['drone_positions'][0]))
+        charging_power = float(station_info.get('charging_power', 50.0))
+
+        # 电量信息（每机一份）
+        battery_obs = observation.get('drone_batteries')
+
         # 每架无人机的 PSO 起点 = 已有队尾任务的目的地（无队列则用当前机位）
         drones_info = []
         for i in range(self.num_drones):
@@ -553,11 +649,23 @@ class PSOScheduler:
                 origin = tuple(self.drone_queues[i][-1]['destination'])
             else:
                 origin = tuple(observation['drone_positions'][i])
+
+            if battery_obs is not None and i < len(battery_obs):
+                bcap = float(battery_obs[i].get('capacity', self.battery_capacity))
+                bcur = float(battery_obs[i].get('current', bcap))
+            else:
+                bcap = self.battery_capacity
+                bcur = bcap
+
             drones_info.append({
                 'index': i,
                 'position': origin,
                 'capacity': self.drone_capacity,
                 'home_position': tuple(observation['drone_positions'][i]),
+                'battery_capacity': bcap,
+                'battery': bcur,
+                'charging_station_position': station_pos,
+                'charging_power': charging_power,
             })
 
         tasks_info = [{
@@ -579,6 +687,10 @@ class PSOScheduler:
             pos_max=self.pso_pos_max,
             weights=self.fitness_weights,
             seed=self.seed,
+            battery_consumption_base=self.battery_consumption_base,
+            battery_load_penalty_factor=self.battery_load_penalty_factor,
+            battery_low_threshold=self.battery_low_threshold,
+            env_step_seconds=self.env_step_seconds,
         )
         assignments, _ = optimizer.optimize(
             drones_info, tasks_info, current_time=current_time, verbose=False

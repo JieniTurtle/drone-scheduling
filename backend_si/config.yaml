@@ -70,4 +70,19 @@ dynamic_greedy:
 # ---------------------------------------------------------------
 drone:
   capacity: 5      # 最大载重
-  speed: 200.0     # 飞行速度
+  speed: 200.0     # 飞行速度（米/秒）
+  time_step: 0.1   # 1 个 env-step 对应的真实秒数（与 frontend/drone.py 中
+                   # DRONE_TIME_STEP 一致）；fitness 用它把"米/秒"和"Wh/秒"换算
+                   # 成 env-step 量纲，使累计时间与 deadline / current_time 同口径
+
+# ---------------------------------------------------------------
+# 电量与充电参数（与 frontend/drone.py 中的 BATTERY_* 常量保持一致）
+# 适应度函数会按本节参数模拟实际耗电；当电量低于 low_threshold 时，
+# 仿真中会插入一次充电站往返（飞行耗电 + 充电耗时），影响完成时间
+# 与 normalized_energy。
+# ---------------------------------------------------------------
+battery:
+  capacity: 15000.0           # 电池容量（Wh），仅当 observation 未给出时作为兜底
+  consumption_base: 0.5       # 单位距离基础耗电
+  load_penalty_factor: 0.3    # 满载相对空载的耗电增量比例
+  low_threshold: 0.2          # 低电量阈值（占容量比例），低于此值触发去充电站
