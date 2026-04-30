@@ -6,7 +6,6 @@ import torch as th
 import csv
 import os
 from pathlib import Path
-import json
 
 
 class EpisodeRunner:
@@ -30,6 +29,17 @@ class EpisodeRunner:
         self.episode_id = 0
         self.metrics_file = self._resolve_metrics_file()
         self._metrics_header_written = False
+        self._metrics_columns = [
+            "source",
+            "episode",
+            "t_env",
+            "mode",
+            "completion_rate",
+            "on_time_rate",
+            "avg_delay",
+            "total_completed",
+        ]
+        self._ensure_metrics_schema()
 
         # Log the first run
         self.log_train_stats_t = -1000000
@@ -163,7 +173,7 @@ class EpisodeRunner:
         if not isinstance(env_info, dict):
             return
 
-        required_keys = ("completion_rate", "on_time_rate", "avg_delay")
+        required_keys = ("completion_rate", "on_time_rate", "avg_delay", "total_completed")
         if not all(k in env_info for k in required_keys):
             return
 
@@ -174,7 +184,7 @@ class EpisodeRunner:
         with open(self.metrics_file, "a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if need_header:
-                writer.writerow(["source", "episode", "t_env", "mode", "completion_rate", "on_time_rate", "avg_delay"])
+                writer.writerow(self._metrics_columns)
                 self._metrics_header_written = True
             writer.writerow([
                 "backend_wx",
@@ -184,19 +194,41 @@ class EpisodeRunner:
                 float(env_info["completion_rate"]),
                 float(env_info["on_time_rate"]),
                 float(env_info["avg_delay"]),
+                int(env_info["total_completed"]),
             ])
 
+    def _ensure_metrics_schema(self):
+        os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
+        if not os.path.exists(self.metrics_file):
+            self._metrics_header_written = False
+            return
+
+        with open(self.metrics_file, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            existing_columns = reader.fieldnames or []
+
+        if existing_columns == self._metrics_columns:
+            self._metrics_header_written = True
+            return
+
+        temp_file = self.metrics_file + ".tmp"
+        with open(temp_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(self._metrics_columns)
+            for row in rows:
+                writer.writerow([row.get(col, "") for col in self._metrics_columns])
+
+        os.replace(temp_file, self.metrics_file)
+        self._metrics_header_written = True
+
     def _resolve_metrics_file(self):
-        project_root = Path(__file__).resolve().parents[4]
-        shared_cfg_path = project_root / "config" / "simulation.json"
-        compare_dir = project_root / "results" / "compare"
         filename = "backend_wx_metrics.csv"
+        sacred_run_dir = getattr(self.args, "sacred_run_dir", None)
+        if sacred_run_dir:
+            return str(Path(sacred_run_dir) / filename)
 
-        if shared_cfg_path.exists():
-            with open(shared_cfg_path, "r", encoding="utf-8") as f:
-                shared_cfg = json.load(f)
-            metrics_cfg = shared_cfg.get("metrics", {})
-            compare_dir = project_root / metrics_cfg.get("compare_dir", "results/compare")
-            filename = metrics_cfg.get("backend_wx_file", "backend_wx_metrics.csv")
-
-        return str(compare_dir / filename)
+        # Fallback: keep compatibility if sacred run dir is unavailable.
+        project_root = Path(__file__).resolve().parents[4]
+        fallback_dir = project_root / "backend_wx" / "pymarl-master" / "results" / "sacred"
+        return str(fallback_dir / "latest" / filename)

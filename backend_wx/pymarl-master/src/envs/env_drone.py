@@ -140,14 +140,18 @@ class EnvDroneEnv(MultiAgentEnv):
 
         if terminated:
             if isinstance(frontend_info, dict):
-                for k in ("completion_rate", "on_time_rate", "avg_delay"):
+                for k in ("completion_rate", "on_time_rate", "avg_delay", "total_completed"):
                     if k in frontend_info:
-                        env_info[k] = float(frontend_info[k])
+                        if k == "total_completed":
+                            env_info[k] = int(frontend_info[k])
+                        else:
+                            env_info[k] = float(frontend_info[k])
             if hasattr(self._frontend_env, "get_statistics"):
                 stats = self._frontend_env.get_statistics()
                 env_info["completion_rate"] = float(stats.get("completion_rate", env_info.get("completion_rate", 0.0)))
                 env_info["on_time_rate"] = float(stats.get("on_time_rate", env_info.get("on_time_rate", 0.0)))
                 env_info["avg_delay"] = float(stats.get("avg_delay", env_info.get("avg_delay", 0.0)))
+                env_info["total_completed"] = int(stats.get("total_completed", env_info.get("total_completed", 0)))
 
         return float(reward), terminated, env_info
 
