@@ -6,6 +6,7 @@ import datetime
 from shapely.geometry import Point, LineString
 import math
 from drone import Drone
+from charging_station import DEFAULT_CHARGING_STATION
 from config.settings import get_shared_config
 # from test import OptimizedMapViewer
 from tools.osm import load_map_data, get_building_location_by_name, get_global_bounds
@@ -339,11 +340,30 @@ class Environment:
         # 3b. 扁平的 is_free 状态（与 unassigned_tasks 是否为空解耦，事件驱动调度依赖此字段）
         drone_is_free = [drone.is_free for drone in self.drones]
 
+        # 4. 电量信息（PSO 等预测式调度器需要据此评估能耗与充电耗时）
+        drone_batteries = [
+            {
+                'current': drone.current_battery,
+                'capacity': drone.battery_capacity,
+                'is_charging': drone.is_charging,
+            }
+            for drone in self.drones
+        ]
+
+        # 5. 充电站信息（位置 + 充电功率），与 frontend/drone.py 实际使用的为同一个站点
+        station_pos = DEFAULT_CHARGING_STATION.get_position()
+        charging_station_info = {
+            'position': [station_pos[0], station_pos[1]],
+            'charging_power': DEFAULT_CHARGING_STATION.charging_power,
+        }
+
         return {
             'drone_positions': drone_positions,
             'unassigned_tasks': unassigned_tasks_info,
             'drone_free_masks': drone_free_masks,
             'drone_is_free': drone_is_free,
+            'drone_batteries': drone_batteries,
+            'charging_station': charging_station_info,
         }
     
     def plan_route_for_tasks(self, drone, tasks):
