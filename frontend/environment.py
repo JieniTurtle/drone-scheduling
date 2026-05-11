@@ -21,6 +21,7 @@ MAX_UNASSIGNED_TASKS = int(ENV_CFG.get("max_unassigned_tasks", 5))
 DEFAULT_EPISODE_MAX_STEPS = int(ENV_CFG.get("episode_max_steps", 1200))
 DEFAULT_NUM_DRONES = int(ENV_CFG.get("num_drones", 3))
 DEFAULT_INITIAL_TASK_COUNT = int(ENV_CFG.get("initial_task_count", 8))
+PRINT_ROUTE_DEBUG = bool(ENV_CFG.get("print_route_debug", False))
 
 class Environment:
     def __init__(self, osm_file_path, visualize=False, episode_max_steps=DEFAULT_EPISODE_MAX_STEPS):
@@ -409,9 +410,10 @@ class Environment:
             
             current_pos = dest
         
-        print(f"Full planned route for drone {drone.drone_id}: {full_route}")
-        elapsed = time.perf_counter() - start_time
-        print(f"assign_task elapsed: {elapsed:.6f} seconds")
+        if PRINT_ROUTE_DEBUG:
+            print(f"Full planned route for drone {drone.drone_id}: {full_route}")
+            elapsed = time.perf_counter() - start_time
+            print(f"assign_task elapsed: {elapsed:.6f} seconds")
         
         # 验证整个路线是否与建筑物相交
         self.verify_route_with_types(full_route)

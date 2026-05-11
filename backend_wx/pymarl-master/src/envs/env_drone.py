@@ -108,7 +108,6 @@ class EnvDroneEnv(MultiAgentEnv):
         obs_before = self._last_obs if self._last_obs is not None else self._frontend_env._obs()
 
         assignments = {}
-        selected_task_ids = set()
         unassigned_tasks = obs_before.get("unassigned_tasks", [])
         drone_is_free = obs_before.get("drone_is_free", [True] * self.n_agents)
 
@@ -122,10 +121,6 @@ class EnvDroneEnv(MultiAgentEnv):
                 continue
 
             task_id = unassigned_tasks[task_slot]["task_id"]
-            if task_id in selected_task_ids:
-                continue
-
-            selected_task_ids.add(task_id)
             assignments[agent_id] = [task_id]
 
         next_obs, reward, frontend_done, frontend_info = self._frontend_env.step(assignments)

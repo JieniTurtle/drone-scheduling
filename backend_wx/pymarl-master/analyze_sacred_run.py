@@ -53,17 +53,70 @@ def _extract_xy(rows, x_key, y_key):
     return xs, ys
 
 
-def _find_best_test_row(test_rows):
-    if not test_rows:
+def _find_best_test_point_from_info(info_data):
+    """Find best test point from info.json curves.
+
+    Expects arrays:
+      - test_completion_rate_mean and test_completion_rate_mean_T
+      - test_on_time_rate_mean and test_on_time_rate_mean_T
+      - test_avg_delay_mean and test_avg_delay_mean_T
+
+    Strategy: maximize (completion_rate, on_time_rate) and minimize avg_delay.
+    """
+    if not isinstance(info_data, dict):
         return None
 
-    def sort_key(r):
-        c = _safe_float(r.get("completion_rate"), default=0.0)
-        o = _safe_float(r.get("on_time_rate"), default=0.0)
-        d = _safe_float(r.get("avg_delay"), default=1e18)
+    keys = [
+        ("test_completion_rate_mean", "test_completion_rate_mean_T"),
+        ("test_on_time_rate_mean", "test_on_time_rate_mean_T"),
+        ("test_avg_delay_mean", "test_avg_delay_mean_T"),
+    ]
+    for v_key, t_key in keys:
+        if v_key not in info_data or t_key not in info_data:
+            return None
+        if not isinstance(info_data[v_key], list) or not isinstance(info_data[t_key], list):
+            return None
+
+    tc = info_data["test_completion_rate_mean"]
+    tct = info_data["test_completion_rate_mean_T"]
+    to = info_data["test_on_time_rate_mean"]
+    tot = info_data["test_on_time_rate_mean_T"]
+    td = info_data["test_avg_delay_mean"]
+    tdt = info_data["test_avg_delay_mean_T"]
+
+    # Align by t_env.
+    def to_map(vals, ts):
+        out = {}
+        for v, t in zip(vals, ts):
+            tt = _safe_float(t, None)
+            vv = _safe_float(v, None)
+            if tt is None or vv is None:
+                continue
+            out[tt] = vv
+        return out
+
+    m_c = to_map(tc, tct)
+    m_o = to_map(to, tot)
+    m_d = to_map(td, tdt)
+
+    common_ts = sorted(set(m_c.keys()) & set(m_o.keys()) & set(m_d.keys()))
+    if not common_ts:
+        return None
+
+    def sort_key(t):
+        c = m_c.get(t, 0.0)
+        o = m_o.get(t, 0.0)
+        d = m_d.get(t, 1e18)
+        # higher completion & on-time, lower delay
         return (c, o, -d)
 
-    return max(test_rows, key=sort_key)
+    best_t = max(common_ts, key=sort_key)
+    return {
+        "t_env": best_t,
+        "test_completion_rate_mean": m_c[best_t],
+        "test_on_time_rate_mean": m_o[best_t],
+        "test_avg_delay_mean": m_d[best_t],
+    }
 
 
 def _plot_metrics(rows, out_dir):
@@ -144,14 +197,14 @@ def _plot_info_curves(info_data, out_dir):
 
 def _write_summary(run_dir, rows, info_data, out_dir):
     train_rows, test_rows = _split_mode_rows(rows)
-    best_test = _find_best_test_row(test_rows)
+    best_test_from_info = _find_best_test_point_from_info(info_data)
 
     summary = {
         "run_dir": str(run_dir),
         "metrics_rows": len(rows),
         "train_rows": len(train_rows),
         "test_rows": len(test_rows),
-        "best_test": best_test,
+        "best_test_from_info": best_test_from_info,
         "info_keys": sorted(list(info_data.keys()))[:200],
     }
 
@@ -176,10 +229,20 @@ def analyze(run_dir):
 
     _write_summary(run_dir, rows, info_data, out_dir)
 
+    best_info = _find_best_test_point_from_info(info_data)
+
     print("=" * 72)
     print(f"Run Dir: {run_dir}")
     print(f"Metrics CSV exists: {csv_path.exists()}, rows: {len(rows)}")
     print(f"Info JSON exists: {info_path.exists()}, keys: {len(info_data.keys()) if isinstance(info_data, dict) else 0}")
+    if best_info:
+        print(
+            "Best test point from info.json: "
+            f"t_env={best_info['t_env']}, "
+            f"completion={best_info['test_completion_rate_mean']:.4f}, "
+            f"on_time={best_info['test_on_time_rate_mean']:.4f}, "
+            f"avg_delay={best_info['test_avg_delay_mean']:.4f}"
+        )
     print(f"Output charts dir: {out_dir}")
     print("Generated files:")
     for p in sorted(out_dir.glob("*.png")):
@@ -195,8 +258,8 @@ def main():
     parser.add_argument(
         "--run-dir",
         type=str,
-        default="results/sacred/12",
-        help="Run folder path, e.g. results/sacred/12",
+        default="results/sacred/10",
+        help="Run folder path, e.g. results/sacred/10",
     )
     args = parser.parse_args()
     analyze(args.run_dir)
