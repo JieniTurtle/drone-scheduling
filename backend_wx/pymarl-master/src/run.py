@@ -23,6 +23,9 @@ def run(_run, _config, _log):
 
     args = SN(**_config)
     args.device = "cuda" if args.use_cuda else "cpu"
+    sacred_root = os.path.join(dirname(dirname(abspath(__file__))), "results", "sacred")
+    sacred_run_id = str(getattr(_run, "_id", "latest"))
+    args.sacred_run_dir = os.path.join(sacred_root, sacred_run_id)
 
     # setup loggers
     logger = Logger(_log)
@@ -193,8 +196,9 @@ def run_sequential(args, logger):
 
         if args.save_model and (runner.t_env - model_save_time >= args.save_model_interval or model_save_time == 0):
             model_save_time = runner.t_env
-            save_path = os.path.join(args.local_results_path, "models", args.unique_token, str(runner.t_env))
-            #"results/models/{}".format(unique_token)
+            # Always save under backend_wx/pymarl-master/results/models.
+            model_root = os.path.join(dirname(dirname(abspath(__file__))), "results", "models")
+            save_path = os.path.join(model_root, args.unique_token, str(runner.t_env))
             os.makedirs(save_path, exist_ok=True)
             logger.console_logger.info("Saving models to {}".format(save_path))
 

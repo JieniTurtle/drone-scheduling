@@ -6,29 +6,38 @@ import datetime
 from shapely.geometry import Point, LineString
 import math
 from drone import Drone
-from task import Task
+from charging_station import DEFAULT_CHARGING_STATION
+from config.settings import get_shared_config
 # from test import OptimizedMapViewer
 from tools.osm import load_map_data, get_building_location_by_name, get_global_bounds
-from scheduler import TaskGenerator
+from task import TaskGenerator
 from map_drawer import OptimizedMapViewer
 from task import WAREHOUSE_POS
 
 
-MAX_UNASSIGNED_TASKS = 20  # 任务池中最大未分配任务数
+CFG = get_shared_config()
+ENV_CFG = CFG.get("environment", {})
+MAX_UNASSIGNED_TASKS = int(ENV_CFG.get("max_unassigned_tasks", 5))
+DEFAULT_EPISODE_MAX_STEPS = int(ENV_CFG.get("episode_max_steps", 1200))
+DEFAULT_NUM_DRONES = int(ENV_CFG.get("num_drones", 3))
+DEFAULT_INITIAL_TASK_COUNT = int(ENV_CFG.get("initial_task_count", 8))
 
 class Environment:
-    def __init__(self, osm_file_path, visualize=False):
+    def __init__(self, osm_file_path, visualize=False, episode_max_steps=DEFAULT_EPISODE_MAX_STEPS):
         _, buildings_with_height = load_map_data(osm_file_path)
 
         self.global_bounds = get_global_bounds(buildings_with_height)
 
         self.high_buildings = [b for b in buildings_with_height if b['height'] is not None and b['height'] > 20]
 
-        self.task_generator = TaskGenerator(file_path='clicked_positions.txt')
+        task_cfg = CFG.get("task", {})
+        task_file = task_cfg.get("clicked_positions_file", 'clicked_positions.txt')
+        self.task_generator = TaskGenerator(file_path=task_file)
         self.unassigned_tasks = []
         self.drones = []  # 初始化无人机列表
+        self.episode_max_steps = int(episode_max_steps)
         # 创建多架无人机（从仓库位置出发）
-        NUM_DRONES = 3  # 可根据需要调整无人x机数量
+        NUM_DRONES = DEFAULT_NUM_DRONES
         self.drones = [
             Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1], drone_id=f"drone_{i}")
             for i in range(NUM_DRONES)
@@ -45,10 +54,18 @@ class Environment:
         
         # 跟踪每个无人机之前的空闲状态
         self._prev_free_status = {i: True for i in range(len(self.drones))}
+
+        # 统计指标（按回合统计）
+        self.total_generated_tasks = 0
+        self.total_completed_tasks = 0
+        self.total_on_time_tasks = 0
+        self.total_delay = 0.0
+        self.total_delivery_time = 0.0
         
          # 初始生成一批任务
-        new_tasks = self.task_generator.generate_random_tasks(num_tasks=8, current_time=self.current_time)
+        new_tasks = self.task_generator.generate_random_tasks(num_tasks=DEFAULT_INITIAL_TASK_COUNT, current_time=self.current_time)
         self.unassigned_tasks.extend(new_tasks)
+        self.total_generated_tasks += len(new_tasks)
         print(f"Generated {len(new_tasks)} tasks:")
         for task in new_tasks:
             print(f"  {task}")
@@ -84,8 +101,13 @@ class Environment:
     
     def get_statistics(self):
         """获取当前统计指标"""
+        completion_rate = 0.0
+        if self.total_generated_tasks > 0:
+            completion_rate = self.total_completed_tasks / self.total_generated_tasks
+
         if self.total_completed_tasks == 0:
             return {
+                'completion_rate': completion_rate,
                 'total_completed': 0,
                 'on_time_rate': 0.0,
                 'avg_delay': 0.0,
@@ -93,6 +115,7 @@ class Environment:
             }
         
         return {
+            'completion_rate': completion_rate,
             'total_completed': self.total_completed_tasks,
             'on_time_rate': self.total_on_time_tasks / self.total_completed_tasks,
             'avg_delay': self.total_delay / self.total_completed_tasks,
@@ -105,6 +128,7 @@ class Environment:
         print(f"\n{'='*70}")
         print(f"📊 累计统计")
         print(f"{'='*70}")
+        print(f"  完成率: {stats['completion_rate']:.2%}")
         print(f"  完成任务数: {stats['total_completed']}")
         print(f"  准时率: {stats['on_time_rate']:.2%}")
         print(f"  平均延迟: {stats['avg_delay']:.2f} 时间单位")
@@ -146,8 +170,10 @@ class Environment:
 
         # 持续生成新任务，保持任务池有足够任务
         if len(self.unassigned_tasks) < MAX_UNASSIGNED_TASKS:
-            new_tasks = self.task_generator.generate_random_tasks(num_tasks=5, current_time=self.current_time)
+            need_count = MAX_UNASSIGNED_TASKS - len(self.unassigned_tasks)
+            new_tasks = self.task_generator.generate_random_tasks(num_tasks=need_count, current_time=self.current_time)
             self.unassigned_tasks.extend(new_tasks)
+            self.total_generated_tasks += len(new_tasks)
 
         for drone in self.drones:
             drone.update()
@@ -170,6 +196,13 @@ class Environment:
                         delay = max(0, completion_time - deadline)
                     else:
                         delay = 0
+
+                    is_on_time = delay <= 0
+                    self.total_completed_tasks += 1
+                    self.total_delay += float(delay)
+                    self.total_delivery_time += float(delivery_time)
+                    if is_on_time:
+                        self.total_on_time_tasks += 1
                     
                     self.completed_tasks.append({
                         'task': completed_task,
@@ -187,9 +220,40 @@ class Environment:
         if self.viewer:
             running = self.viewer.render(self.drones)
 
-        return self._obs(), self._reward(), running, None
+        done_by_horizon = self.current_time >= self.episode_max_steps
+        done = bool(done_by_horizon or (not running))
+        stats = self.get_statistics()
+        info = {
+            "episode_limit": bool(done_by_horizon),
+            "completion_rate": float(stats["completion_rate"]),
+            "on_time_rate": float(stats["on_time_rate"]),
+            "avg_delay": float(stats["avg_delay"]),
+        }
+
+        return self._obs(), self._reward(), done, info
     
     def reset(self):
+        self.unassigned_tasks = []
+        NUM_DRONES = len(self.drones) if self.drones else DEFAULT_NUM_DRONES
+        self.drones = [
+            Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1], drone_id=f"drone_{i}")
+            for i in range(NUM_DRONES)
+        ]
+        self.current_time = 0
+        self.completed_tasks = []
+        self.drone_assignments = {}
+        self._prev_free_status = {i: True for i in range(len(self.drones))}
+
+        self.total_generated_tasks = 0
+        self.total_completed_tasks = 0
+        self.total_on_time_tasks = 0
+        self.total_delay = 0.0
+        self.total_delivery_time = 0.0
+
+        new_tasks = self.task_generator.generate_random_tasks(num_tasks=DEFAULT_INITIAL_TASK_COUNT, current_time=self.current_time)
+        self.unassigned_tasks.extend(new_tasks)
+        self.total_generated_tasks += len(new_tasks)
+
         return self._obs()
     
     def _reward(self):
@@ -276,11 +340,30 @@ class Environment:
         # 3b. 扁平的 is_free 状态（与 unassigned_tasks 是否为空解耦，事件驱动调度依赖此字段）
         drone_is_free = [drone.is_free for drone in self.drones]
 
+        # 4. 电量信息（PSO 等预测式调度器需要据此评估能耗与充电耗时）
+        drone_batteries = [
+            {
+                'current': drone.current_battery,
+                'capacity': drone.battery_capacity,
+                'is_charging': drone.is_charging,
+            }
+            for drone in self.drones
+        ]
+
+        # 5. 充电站信息（位置 + 充电功率），与 frontend/drone.py 实际使用的为同一个站点
+        station_pos = DEFAULT_CHARGING_STATION.get_position()
+        charging_station_info = {
+            'position': [station_pos[0], station_pos[1]],
+            'charging_power': DEFAULT_CHARGING_STATION.charging_power,
+        }
+
         return {
             'drone_positions': drone_positions,
             'unassigned_tasks': unassigned_tasks_info,
             'drone_free_masks': drone_free_masks,
             'drone_is_free': drone_is_free,
+            'drone_batteries': drone_batteries,
+            'charging_station': charging_station_info,
         }
     
     def plan_route_for_tasks(self, drone, tasks):

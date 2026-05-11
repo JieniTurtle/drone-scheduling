@@ -1,0 +1,46 @@
+{
+  "environment": {
+    "max_unassigned_tasks": 5,
+    "episode_max_steps": 1200,
+    "num_drones": 3,
+    "initial_task_count": 8
+  },
+  "task": {
+    "clicked_positions_file": "clicked_positions.txt",
+    "weight_min": 1,
+    "weight_max": 4,
+    "priority_min": 1,
+    "priority_max": 5,
+    "deadline_offset_min": 200,
+    "deadline_offset_max": 500,
+    "warehouse_route_id": "1364970737#0",
+    "charger_route_id": "125465016",
+    "warehouse_pos": [357600.574872369, 3462308.772003661]
+  },
+  "charging_station": {
+    "station_id": 0,
+    "x": 356000.0,
+    "y": 3463000.0,
+    "charging_power": 50
+  },
+  "drone": {
+    "battery_capacity": 15000.0,
+    "battery_consumption_base": 0.5,
+    "battery_load_penalty_factor": 0.3,
+    "battery_low_threshold": 0.2,
+    "speed": 200.0,
+    "time_step": 0.1,
+    "carrying_capacity": 5
+  },
+  "backend_wx": {
+    "max_tasks": 5,
+    "max_remaining_time": 600.0,
+    "map_relative_path": "data/map/part_of_yangpu.osm"
+  },
+  "metrics": {
+    "compare_dir": "results/compare",
+    "frontend_greedy_file": "frontend_greedy_metrics.csv",
+    "backend_si_file": "backend_si_metrics.csv",
+    "backend_wx_file": "backend_wx_metrics.csv"
+  }
+}

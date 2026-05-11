@@ -4,19 +4,15 @@
 runner: "episode" # Runs 1 env for an episode
 mac: "basic_mac" # Basic controller
 env: "env_drone" # Environment name
-env_args:
-  episode_limit: 200
-  max_tasks: 20
-  max_remaining_time: 500.0
-  map_relative_path: "data/map/part_of_yangpu.osm"
+env_args: {}
 batch_size_run: 1 # Number of environments to run in parallel
 test_nepisode: 1 # Number of episodes to test for
-test_interval: 2000 # Test after {} timesteps have passed
+test_interval: 12000 # Test after {} timesteps have passed
 test_greedy: True # Use greedy evaluation (if False, will set epsilon floor to 0
-log_interval: 2000 # Log summary of stats after every {} timesteps
-runner_log_interval: 2000 # Log runner stats (not test stats) every {} timesteps
-learner_log_interval: 2000 # Log training stats every {} timesteps
-t_max: 50000 # Stop running after this many timesteps
+log_interval: 4000 # Log summary of stats after every {} timesteps
+runner_log_interval: 4000 # Log runner stats (not test stats) every {} timesteps
+learner_log_interval: 4000 # Log training stats every {} timesteps
+t_max: 120000 # Stop running after this many timesteps
 use_cuda: True # Use gpu by default unless it isn't available
 buffer_cpu_only: True # If true we won't keep all of the replay buffer in vram
 
@@ -32,7 +28,7 @@ local_results_path: "results" # Path for local results
 
 # --- RL hyperparameters ---
 gamma: 0.99
-batch_size: 32 # Number of episodes to train on
+batch_size: 8 # Number of episodes to train on
 buffer_size: 12 # Size of the replay buffer
 lr: 0.0003 # Learning rate for agents
 critic_lr: 0.0003 # Learning rate for critics

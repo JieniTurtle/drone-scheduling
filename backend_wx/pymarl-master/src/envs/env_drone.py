@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from pathlib import Path
 
 import numpy as np
@@ -12,22 +13,35 @@ class EnvDroneEnv(MultiAgentEnv):
 
     def __init__(
         self,
-        episode_limit=200,
-        max_tasks=20,
-        max_remaining_time=500.0,
+        episode_limit=None,
+        max_tasks=None,
+        max_remaining_time=None,
         frontend_root=None,
-        map_relative_path="data/map/part_of_yangpu.osm",
+        map_relative_path=None,
         seed=None,
         **kwargs,
     ):
         del kwargs
+
+        self._project_root = self._resolve_project_root(frontend_root)
+        shared_cfg = self._load_shared_config()
+        env_cfg = shared_cfg.get("environment", {})
+        wx_cfg = shared_cfg.get("backend_wx", {})
+
+        if episode_limit is None:
+            episode_limit = env_cfg.get("episode_max_steps", 1200)
+        if max_tasks is None:
+            max_tasks = wx_cfg.get("max_tasks", env_cfg.get("max_unassigned_tasks", 5))
+        if max_remaining_time is None:
+            max_remaining_time = wx_cfg.get("max_remaining_time", 600.0)
+        if map_relative_path is None:
+            map_relative_path = wx_cfg.get("map_relative_path", "data/map/part_of_yangpu.osm")
 
         self.episode_limit = int(episode_limit)
         self.max_tasks = int(max_tasks)
         self.max_remaining_time = float(max_remaining_time)
         self._rng = np.random.RandomState(seed if seed is not None else 0)
 
-        self._project_root = self._resolve_project_root(frontend_root)
         self._frontend_dir = self._project_root / "frontend"
         self._map_path = self._frontend_dir / map_relative_path
 
@@ -57,6 +71,13 @@ class EnvDroneEnv(MultiAgentEnv):
             raise FileNotFoundError("Cannot find frontend directory under project root.")
         return root
 
+    def _load_shared_config(self):
+        cfg_path = self._project_root / "config" / "simulation.json"
+        if not cfg_path.exists():
+            return {}
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
     def _prepare_frontend_import_paths(self):
         frontend_dir_str = str(self._frontend_dir)
         root_dir_str = str(self._project_root)
@@ -73,7 +94,7 @@ class EnvDroneEnv(MultiAgentEnv):
         try:
             # frontend Environment relies on relative paths for local assets.
             os.chdir(str(self._frontend_dir))
-            return Environment(str(self._map_path), visualize=False)
+            return Environment(str(self._map_path), visualize=False, episode_max_steps=self.episode_limit)
         finally:
             os.chdir(prev_cwd)
 
@@ -107,15 +128,31 @@ class EnvDroneEnv(MultiAgentEnv):
             selected_task_ids.add(task_id)
             assignments[agent_id] = [task_id]
 
-        next_obs, reward, running, _ = self._frontend_env.step(assignments)
+        next_obs, reward, frontend_done, frontend_info = self._frontend_env.step(assignments)
         self._last_obs = next_obs
         self._t += 1
 
         hit_episode_limit = self._t >= self.episode_limit
-        terminated = bool(hit_episode_limit or (not running))
+        terminated = bool(hit_episode_limit or frontend_done)
         env_info = {
             "episode_limit": bool(hit_episode_limit),
         }
+
+        if terminated:
+            if isinstance(frontend_info, dict):
+                for k in ("completion_rate", "on_time_rate", "avg_delay", "total_completed"):
+                    if k in frontend_info:
+                        if k == "total_completed":
+                            env_info[k] = int(frontend_info[k])
+                        else:
+                            env_info[k] = float(frontend_info[k])
+            if hasattr(self._frontend_env, "get_statistics"):
+                stats = self._frontend_env.get_statistics()
+                env_info["completion_rate"] = float(stats.get("completion_rate", env_info.get("completion_rate", 0.0)))
+                env_info["on_time_rate"] = float(stats.get("on_time_rate", env_info.get("on_time_rate", 0.0)))
+                env_info["avg_delay"] = float(stats.get("avg_delay", env_info.get("avg_delay", 0.0)))
+                env_info["total_completed"] = int(stats.get("total_completed", env_info.get("total_completed", 0)))
+
         return float(reward), terminated, env_info
 
     def _to_action_list(self, actions):

@@ -3,6 +3,9 @@ from functools import partial
 from components.episode_buffer import EpisodeBatch
 import numpy as np
 import torch as th
+import csv
+import os
+from pathlib import Path
 
 
 class EpisodeRunner:
@@ -23,6 +26,20 @@ class EpisodeRunner:
         self.test_returns = []
         self.train_stats = {}
         self.test_stats = {}
+        self.episode_id = 0
+        self.metrics_file = self._resolve_metrics_file()
+        self._metrics_header_written = False
+        self._metrics_columns = [
+            "source",
+            "episode",
+            "t_env",
+            "mode",
+            "completion_rate",
+            "on_time_rate",
+            "avg_delay",
+            "total_completed",
+        ]
+        self._ensure_metrics_schema()
 
         # Log the first run
         self.log_train_stats_t = -1000000
@@ -50,24 +67,40 @@ class EpisodeRunner:
         if hasattr(self.env, "set_test_mode"):
             self.env.set_test_mode(test_mode)
         self.reset()
+        self.episode_id += 1
 
         terminated = False
         episode_return = 0
+        noop_fastpath_steps = 0
         self.mac.init_hidden(batch_size=self.batch_size)
 
         while not terminated:
 
+            avail_actions = self.env.get_avail_actions()
+
             pre_transition_data = {
                 "state": [self.env.get_state()],
-                "avail_actions": [self.env.get_avail_actions()],
+                "avail_actions": [avail_actions],
                 "obs": [self.env.get_obs()]
             }
 
             self.batch.update(pre_transition_data, ts=self.t)
 
-            # Pass the entire batch of experiences up till now to the agents
-            # Receive the actions for each agent at this timestep in a batch of size 1
-            actions = self.mac.select_actions(self.batch, t_ep=self.t, t_env=self.t_env, test_mode=test_mode)
+            avail_actions_arr = np.asarray(avail_actions)
+            only_noop = (
+                avail_actions_arr.ndim == 2
+                and avail_actions_arr.shape[1] > 0
+                and np.all(avail_actions_arr[:, 0] == 1)
+                and np.all(avail_actions_arr.sum(axis=1) == 1)
+            )
+
+            if only_noop:
+                actions = th.zeros((self.batch_size, self.env.n_agents), dtype=th.long, device=self.args.device)
+                noop_fastpath_steps += 1
+            else:
+                # Pass the entire batch of experiences up till now to the agents
+                # Receive the actions for each agent at this timestep in a batch of size 1
+                actions = self.mac.select_actions(self.batch, t_ep=self.t, t_env=self.t_env, test_mode=test_mode)
 
             reward, terminated, env_info = self.env.step(actions[0])
             episode_return += reward
@@ -81,6 +114,10 @@ class EpisodeRunner:
             self.batch.update(post_transition_data, ts=self.t)
 
             self.t += 1
+
+        env_info["noop_fastpath_steps"] = noop_fastpath_steps
+
+        self._write_episode_metrics(env_info, test_mode)
 
         if hasattr(self.env, "pop_episode_reward_adjustments"):
             adjustments, _ = self.env.pop_episode_reward_adjustments(self.t)
@@ -131,3 +168,67 @@ class EpisodeRunner:
             if k != "n_episodes":
                 self.logger.log_stat(prefix + k + "_mean" , v/stats["n_episodes"], self.t_env)
         stats.clear()
+
+    def _write_episode_metrics(self, env_info, test_mode):
+        if not isinstance(env_info, dict):
+            return
+
+        required_keys = ("completion_rate", "on_time_rate", "avg_delay", "total_completed")
+        if not all(k in env_info for k in required_keys):
+            return
+
+        os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
+        mode = "test" if test_mode else "train"
+
+        need_header = (not self._metrics_header_written) and (not os.path.exists(self.metrics_file))
+        with open(self.metrics_file, "a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if need_header:
+                writer.writerow(self._metrics_columns)
+                self._metrics_header_written = True
+            writer.writerow([
+                "backend_wx",
+                int(self.episode_id),
+                int(self.t_env),
+                mode,
+                float(env_info["completion_rate"]),
+                float(env_info["on_time_rate"]),
+                float(env_info["avg_delay"]),
+                int(env_info["total_completed"]),
+            ])
+
+    def _ensure_metrics_schema(self):
+        os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
+        if not os.path.exists(self.metrics_file):
+            self._metrics_header_written = False
+            return
+
+        with open(self.metrics_file, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            existing_columns = reader.fieldnames or []
+
+        if existing_columns == self._metrics_columns:
+            self._metrics_header_written = True
+            return
+
+        temp_file = self.metrics_file + ".tmp"
+        with open(temp_file, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(self._metrics_columns)
+            for row in rows:
+                writer.writerow([row.get(col, "") for col in self._metrics_columns])
+
+        os.replace(temp_file, self.metrics_file)
+        self._metrics_header_written = True
+
+    def _resolve_metrics_file(self):
+        filename = "backend_wx_metrics.csv"
+        sacred_run_dir = getattr(self.args, "sacred_run_dir", None)
+        if sacred_run_dir:
+            return str(Path(sacred_run_dir) / filename)
+
+        # Fallback: keep compatibility if sacred run dir is unavailable.
+        project_root = Path(__file__).resolve().parents[4]
+        fallback_dir = project_root / "backend_wx" / "pymarl-master" / "results" / "sacred"
+        return str(fallback_dir / "latest" / filename)
