@@ -7,6 +7,7 @@ import math
 from collections import defaultdict
 from drone import Drone
 from tools.osm import load_map_data
+from drone import DEFAULT_CHARGING_STATION, ChargingStation
 
 class OptimizedMapViewer:
     """优化的地图查看器，使用空间索引提高性能"""
@@ -81,6 +82,13 @@ class OptimizedMapViewer:
         
         self.font = pygame.font.Font(None, 20)
         self.small_font = pygame.font.Font(None, 16)
+        
+        # 加载图片资源
+        try:
+            self.charger_image = pygame.image.load('assets/charger.png').convert_alpha()
+        except pygame.error as e:
+            print(f"Failed to load charger image: {e}")
+            self.charger_image = None
        
     def build_spatial_index(self):
         """构建空间索引以加速查询"""
@@ -189,6 +197,40 @@ class OptimizedMapViewer:
                 
                 pygame.draw.polygon(self.screen, color, screen_points)
                 pygame.draw.polygon(self.screen, (100, 100, 120), screen_points, 1)
+
+    def draw_charging_station(self, station: ChargingStation):
+        """绘制充电站"""
+        screen_pos = self.world_to_screen(station.x, station.y)
+        
+        if self.charger_image:
+            # 使用图片绘制充电站
+            # 根据缩放级别调整图片大小
+            base_size = 32  # 基础大小
+            scaled_size = max(base_size, int(base_size * self.zoom))
+            
+            # 缩放图片
+            scaled_image = pygame.transform.scale(self.charger_image, (scaled_size, scaled_size))
+            
+            # 计算绘制位置（居中）
+            image_rect = scaled_image.get_rect(center=screen_pos)
+            self.screen.blit(scaled_image, image_rect)
+            
+            # 绘制充电站ID
+            # id_text = self.small_font.render(station.station_id, True, (0, 0, 0))
+            # self.screen.blit(id_text, (screen_pos[0] + scaled_size // 2 + 5, screen_pos[1] - scaled_size // 2))
+        else:
+            # 回退到圆形绘制（如果图片加载失败）
+            station_size = max(10, int(8 * self.zoom))
+            
+            # 绘制充电站（蓝色圆形）
+            pygame.draw.circle(self.screen, (0, 100, 255), screen_pos, station_size)
+            pygame.draw.circle(self.screen, (255, 255, 255), screen_pos, station_size - 2)
+            pygame.draw.circle(self.screen, (0, 100, 255), screen_pos, station_size - 4)
+            
+            # 绘制充电站ID
+            id_text = self.small_font.render(station.station_id, True, (0, 0, 0))
+            self.screen.blit(id_text, (screen_pos[0] + station_size + 5, screen_pos[1] - station_size))
+
                 
     
     def find_hovered_building(self, mouse_pos):
@@ -207,9 +249,9 @@ class OptimizedMapViewer:
     def draw_info_panel(self, drones=[]):
         """绘制信息面板"""
         info_lines = [
-            f"Zoom: {self.zoom:.2f}x",
-            f"Buildings: {len(self.buildings_with_height)}",
-            f"With height: {sum(1 for b in self.buildings_with_height if b['height'])}",
+            # f"Zoom: {self.zoom:.2f}x",
+            # f"Buildings: {len(self.buildings_with_height)}",
+            # f"With height: {sum(1 for b in self.buildings_with_height if b['height'])}",
             f"FPS: {self.current_fps}",
             "",
             "Drone Status:",
@@ -220,17 +262,19 @@ class OptimizedMapViewer:
             drone_idx = int(drone.drone_id.split('_')[1]) if '_' in drone.drone_id else 0
             drone_color = self.DRONE_COLORS[drone_idx % len(self.DRONE_COLORS)]
             color_name = f"#{drone_color[0]:02X}{drone_color[1]:02X}{drone_color[2]:02X}"
-            status = "IDLE" if drone.is_free else f"BUSY ({len(drone.scheduled_position)} pts)"
+            status = "IDLE" if drone.is_free else f"BUSY"
+            battery_pct = drone.get_battery_level() * 100
+            status += f", Battery: {battery_pct:.1f}%"
             info_lines.append(f"  {drone.drone_id}: {status}")
         
-        info_lines.extend([
-            "",
-            "Controls:",
-            "  Drag - Pan",
-            "  Scroll - Zoom",
-            "  Click - Select",
-            "  R - Reset"
-        ])
+        # info_lines.extend([
+        #     "",
+        #     "Controls:",
+        #     "  Drag - Pan",
+        #     "  Scroll - Zoom",
+        #     "  Click - Select",
+        #     "  R - Reset"
+        # ])
         
         if self.selected_building is not None:
             building = self.buildings_with_height[self.selected_building]
@@ -355,6 +399,8 @@ class OptimizedMapViewer:
                 is_hovered = (self.hovered_building == idx)
                 is_selected = (self.selected_building == idx)
                 self.draw_building(building, is_hovered, is_selected)
+        
+        self.draw_charging_station(DEFAULT_CHARGING_STATION)
 
         # 绘制所有无人机的路线（先画路线，再画无人机）
         for drone in drones:
@@ -370,6 +416,7 @@ class OptimizedMapViewer:
             drone_color = self.DRONE_COLORS[drone_idx % len(self.DRONE_COLORS)]
             self.draw_drone(drone, drone_color)
         
+
         # 绘制图例
         self.draw_legend()
         
