@@ -66,8 +66,20 @@ class EpisodeRunner:
     def run(self, test_mode=False):
         if hasattr(self.env, "set_test_mode"):
             self.env.set_test_mode(test_mode)
+        next_episode_id = self.episode_id + 1
+        episode_seed = None
+        if hasattr(self.env, "set_episode_seed"):
+            base_seed = getattr(self.args, "seed", None)
+            if base_seed is not None:
+                episode_seed = int(base_seed) + int(next_episode_id)
+            self.env.set_episode_seed(episode_seed)
+
         self.reset()
-        self.episode_id += 1
+        self.episode_id = next_episode_id
+
+        if episode_seed is not None:
+            prefix = "test_" if test_mode else ""
+            self.logger.log_stat(prefix + "episode_seed", episode_seed, self.t_env)
 
         terminated = False
         episode_return = 0

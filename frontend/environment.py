@@ -13,6 +13,7 @@ from tools.osm import load_map_data, get_building_location_by_name, get_global_b
 from task import TaskGenerator
 from map_drawer import OptimizedMapViewer
 from task import WAREHOUSE_POS
+from seed_interface import apply_seed
 
 
 CFG = get_shared_config()
@@ -74,6 +75,8 @@ class Environment:
         self.viewer = None
         if visualize:
             self.viewer = OptimizedMapViewer('data/map/part_of_yangpu.osm')
+
+        self._episode_seed = None
 
         # print(get_building_location_by_name( self.high_buildings, "衷和楼"))
         print(f"加载了 {len(self.high_buildings)} 个具有高度信息的建筑物")
@@ -233,7 +236,19 @@ class Environment:
 
         return self._obs(), self._reward(), done, info
     
-    def reset(self):
+    def set_seed(self, seed):
+        """Set the random seed for the next episode.
+
+        Seed range: 0 <= seed <= 2**32 - 1. None disables deterministic seeding.
+        """
+        self._episode_seed = apply_seed(seed)
+
+    def reset(self, seed=None):
+        if seed is not None:
+            self.set_seed(seed)
+        elif self._episode_seed is not None:
+            apply_seed(self._episode_seed)
+
         self.unassigned_tasks = []
         NUM_DRONES = len(self.drones) if self.drones else DEFAULT_NUM_DRONES
         self.drones = [

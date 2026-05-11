@@ -40,6 +40,8 @@ class EnvDroneEnv(MultiAgentEnv):
         self.episode_limit = int(episode_limit)
         self.max_tasks = int(max_tasks)
         self.max_remaining_time = float(max_remaining_time)
+        self._base_seed = int(seed) if seed is not None else None
+        self._episode_seed = None
         self._rng = np.random.RandomState(seed if seed is not None else 0)
 
         self._frontend_dir = self._project_root / "frontend"
@@ -98,9 +100,23 @@ class EnvDroneEnv(MultiAgentEnv):
         finally:
             os.chdir(prev_cwd)
 
+    def set_episode_seed(self, seed):
+        if seed is None:
+            self._episode_seed = None
+        else:
+            self._episode_seed = int(seed)
+
     def reset(self):
         self._t = 0
-        self._last_obs = self._frontend_env.reset()
+        if self._episode_seed is not None:
+            try:
+                self._last_obs = self._frontend_env.reset(seed=self._episode_seed)
+            except TypeError:
+                if hasattr(self._frontend_env, "set_seed"):
+                    self._frontend_env.set_seed(self._episode_seed)
+                self._last_obs = self._frontend_env.reset()
+        else:
+            self._last_obs = self._frontend_env.reset()
         return self.get_obs(), self.get_state()
 
     def step(self, actions):
