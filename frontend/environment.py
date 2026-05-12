@@ -18,10 +18,8 @@ from seed_interface import apply_seed
 
 CFG = get_shared_config()
 ENV_CFG = CFG.get("environment", {})
-MAX_UNASSIGNED_TASKS = int(ENV_CFG.get("max_unassigned_tasks", 5))
 DEFAULT_EPISODE_MAX_STEPS = int(ENV_CFG.get("episode_max_steps", 1200))
 DEFAULT_NUM_DRONES = int(ENV_CFG.get("num_drones", 3))
-DEFAULT_INITIAL_TASK_COUNT = int(ENV_CFG.get("initial_task_count", 8))
 PRINT_ROUTE_DEBUG = bool(ENV_CFG.get("print_route_debug", False))
 
 class Environment:
@@ -35,7 +33,7 @@ class Environment:
         task_cfg = CFG.get("task", {})
         task_file = task_cfg.get("clicked_positions_file", 'clicked_positions.txt')
         self.task_generator = TaskGenerator(file_path=task_file)
-        self.unassigned_tasks = []
+        self.unassigned_tasks = []  # 保持向后兼容，通过 task_generator 访问
         self.drones = []  # 初始化无人机列表
         self.episode_max_steps = int(episode_max_steps)
         # 创建多架无人机（从仓库位置出发）
@@ -69,11 +67,10 @@ class Environment:
         self.total_charging_energy = 0.0  # 总充电量 (Wh)
         self.total_charging_sessions = 0  # 总充电次数
         self.total_flight_distance = 0.0  # 总飞行距离
-        
-         # 初始生成一批任务
-        new_tasks = self.task_generator.generate_random_tasks(num_tasks=DEFAULT_INITIAL_TASK_COUNT, current_time=self.current_time)
-        self.unassigned_tasks.extend(new_tasks)
-        self.total_generated_tasks += len(new_tasks)
+
+        # 初始生成一批任务
+        new_tasks = self.task_generator.generate_initial_tasks(self.current_time)
+        self.total_generated_tasks = len(new_tasks)
         print(f"Generated {len(new_tasks)} tasks:")
         for task in new_tasks:
             print(f"  {task}")
@@ -89,7 +86,7 @@ class Environment:
 
     def get_global_bounds(self):
         return self.global_bounds
-    
+
     def get_high_buildings(self):
         return self.high_buildings
     
@@ -164,7 +161,7 @@ class Environment:
                     if task_id is not None:
                         # 找到对应的任务
                         task_to_assign = None
-                        for task in self.unassigned_tasks:
+                        for task in self.task_generator.unassigned_tasks:
                             if task.task_id == task_id:
                                 task_to_assign = task
                                 break
@@ -181,18 +178,16 @@ class Environment:
                             # 分配路线给无人机
                             drone.schedule_route(route, task_to_assign.task_id)
                             # 从未分配任务中移除
-                            self.unassigned_tasks.remove(task_to_assign)
+                            self.task_generator.unassigned_tasks.remove(task_to_assign)
                             # 更新任务状态
                             task_to_assign.update_status("assigned")
 
         # 每次调用 update 时，时间加一
         self.current_time += 1
 
-        # 持续生成新任务，保持任务池有足够任务
-        if len(self.unassigned_tasks) < MAX_UNASSIGNED_TASKS:
-            need_count = MAX_UNASSIGNED_TASKS - len(self.unassigned_tasks)
-            new_tasks = self.task_generator.generate_random_tasks(num_tasks=need_count, current_time=self.current_time)
-            self.unassigned_tasks.extend(new_tasks)
+        # 根据模式生成新任务
+        new_tasks = self.task_generator.step(self.current_time)
+        if new_tasks:
             self.total_generated_tasks += len(new_tasks)
 
         # 记录更新前的电量状态，用于统计耗电量
@@ -252,7 +247,13 @@ class Environment:
             running = self.viewer.render(self.drones)
 
         done_by_horizon = self.current_time >= self.episode_max_steps
-        done = bool(done_by_horizon or (not running))
+        done_by_exhaustion = (
+            self.task_generator.mode == "realistic"
+            and self.task_generator.is_exhausted
+            and len(self.task_generator.unassigned_tasks) == 0
+            and all(drone.is_free for drone in self.drones)
+        )
+        done = bool(done_by_horizon or done_by_exhaustion or (not running))
         stats = self.get_statistics()
         info = {
             "episode_limit": bool(done_by_horizon),
@@ -269,6 +270,7 @@ class Environment:
         Seed range: 0 <= seed <= 2**32 - 1. None disables deterministic seeding.
         """
         self._episode_seed = apply_seed(seed)
+        self.task_generator.set_seed(seed)
 
     def reset(self, seed=None):
         if seed is not None:
@@ -296,9 +298,12 @@ class Environment:
         # 重置耗电量统计
         self.total_energy_consumed = 0.0
 
-        new_tasks = self.task_generator.generate_random_tasks(num_tasks=DEFAULT_INITIAL_TASK_COUNT, current_time=self.current_time)
-        self.unassigned_tasks.extend(new_tasks)
-        self.total_generated_tasks += len(new_tasks)
+        # 重置任务生成器并生成初始任务
+        self.task_generator.reset()
+        self.task_generator.set_seed(self._episode_seed)
+        self.task_generator.generate_initial_tasks(self.current_time)
+        self.unassigned_tasks.extend(self.task_generator.unassigned_tasks)
+        self.total_generated_tasks = self.task_generator.total_tasks_generated
 
         return self._obs()
     
@@ -354,7 +359,7 @@ class Environment:
         # 2. 未分配订单的信息
         unassigned_tasks_info = []
         current_time = self.current_time
-        for task in self.unassigned_tasks:
+        for task in self.task_generator.unassigned_tasks:
             source = task.get_source()
             destination = task.get_destination()
             deadline = task.get_deadline()
@@ -380,7 +385,7 @@ class Environment:
         # 3. 所有无人机的is_free掩码
         drone_free_masks = []
         for drone in self.drones:
-            free_mask = [drone.is_free for task in self.unassigned_tasks]
+            free_mask = [drone.is_free for task in self.task_generator.unassigned_tasks]
             drone_free_masks.append(free_mask)
 
         # 3b. 扁平的 is_free 状态（与 unassigned_tasks 是否为空解耦，事件驱动调度依赖此字段）

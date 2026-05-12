@@ -8,8 +8,12 @@ from environment import Environment
 from backend_si.pso_scheduler import PSOScheduler
 
 if __name__ == "__main__":
+    from task import TASK_GEN_MODE
+
     print("=" * 70)
     print("无人机配送调度仿真 - PSOScheduler（双通道 + 动态贪心，配置见 backend_si/config.yaml）")
+    mode_name = "恒定数量模式" if TASK_GEN_MODE == "constant" else "真实场景模式"
+    print(f"任务生成方式: {mode_name} ({TASK_GEN_MODE})")
     print("=" * 70)
 
     env = Environment('data/map/part_of_yangpu.osm', visualize=True)
