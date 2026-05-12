@@ -6,8 +6,9 @@ from shapely.strtree import STRtree
 import math
 from collections import defaultdict
 from drone import Drone
+from frontend.charging_station import ChargingStation
 from tools.osm import load_map_data
-from drone import DEFAULT_CHARGING_STATION, ChargingStation
+from drone import DEFAULT_CHARGING_STATION 
 
 class OptimizedMapViewer:
     """优化的地图查看器，使用空间索引提高性能"""

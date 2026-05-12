@@ -5,7 +5,7 @@ import time
 import datetime
 from shapely.geometry import Point, LineString
 import math
-from drone import Drone
+from drone import Drone, BATTERY_CONSUMPTION_BASE, BATTERY_LOAD_PENALTY_FACTOR
 from charging_station import DEFAULT_CHARGING_STATION
 from config.settings import get_shared_config
 # from test import OptimizedMapViewer
@@ -62,6 +62,12 @@ class Environment:
         self.total_delay = 0.0
         self.total_delivery_time = 0.0
         
+        # 耗电量统计
+        self.total_energy_consumed = 0.0  # 总耗电量 (Wh)
+        self.total_charging_energy = 0.0  # 总充电量 (Wh)
+        self.total_charging_sessions = 0  # 总充电次数
+        self.total_flight_distance = 0.0  # 总飞行距离
+        
          # 初始生成一批任务
         new_tasks = self.task_generator.generate_random_tasks(num_tasks=DEFAULT_INITIAL_TASK_COUNT, current_time=self.current_time)
         self.unassigned_tasks.extend(new_tasks)
@@ -111,15 +117,22 @@ class Environment:
                 'total_completed': 0,
                 'on_time_rate': 0.0,
                 'avg_delay': 0.0,
-                'avg_delivery_time': 0.0
+                'avg_delivery_time': 0.0,
+                'total_energy_consumed': self.total_energy_consumed,
+                'avg_energy_per_task': 0.0,
+                'avg_energy_per_distance': 0.0,
             }
+        
+        avg_energy_per_task = self.total_energy_consumed / self.total_completed_tasks
         
         return {
             'completion_rate': completion_rate,
             'total_completed': self.total_completed_tasks,
             'on_time_rate': self.total_on_time_tasks / self.total_completed_tasks,
             'avg_delay': self.total_delay / self.total_completed_tasks,
-            'avg_delivery_time': self.total_delivery_time / self.total_completed_tasks
+            'avg_delivery_time': self.total_delivery_time / self.total_completed_tasks,
+            'total_energy_consumed': self.total_energy_consumed,
+            'avg_energy_per_task': avg_energy_per_task,
         }
     
     def print_statistics(self):
@@ -133,6 +146,9 @@ class Environment:
         print(f"  准时率: {stats['on_time_rate']:.2%}")
         print(f"  平均延迟: {stats['avg_delay']:.2f} 时间单位")
         print(f"  平均配送时长: {stats['avg_delivery_time']:.2f} 时间单位")
+        print(f"  总耗电量: {stats['total_energy_consumed']:.2f} Wh")
+        if stats['total_completed'] > 0:
+            print(f"  平均每任务耗电: {stats['avg_energy_per_task']:.2f} Wh")
         print(f"{'='*70}\n")
 
     def step(self, actions):
@@ -175,8 +191,19 @@ class Environment:
             self.unassigned_tasks.extend(new_tasks)
             self.total_generated_tasks += len(new_tasks)
 
+        # 记录更新前的电量状态，用于统计耗电量
+        prev_batteries = [drone.current_battery for drone in self.drones]
+
         for drone in self.drones:
             drone.update()
+
+        # 统计耗电量和充电量
+        for i, drone in enumerate(self.drones):
+            battery_change = prev_batteries[i] - drone.current_battery
+            
+            if battery_change > 0:
+                # 消耗了电量
+                self.total_energy_consumed += battery_change
 
         # 检测任务完成：通过 executing_task_id 判断（刚从执行中变为None表示任务完成）
         # 遍历所有无人机，检查是否有刚完成的任务
@@ -249,6 +276,9 @@ class Environment:
         self.total_on_time_tasks = 0
         self.total_delay = 0.0
         self.total_delivery_time = 0.0
+
+        # 重置耗电量统计
+        self.total_energy_consumed = 0.0
 
         new_tasks = self.task_generator.generate_random_tasks(num_tasks=DEFAULT_INITIAL_TASK_COUNT, current_time=self.current_time)
         self.unassigned_tasks.extend(new_tasks)
