@@ -1,3 +1,4 @@
+import math
 import random
 
 from config.settings import get_shared_config
@@ -22,38 +23,41 @@ REALISTIC_CFG = _TASK_GEN_CFG.get("realistic", {})
 # 一、Constant 模式（恒定速率模式）
 #    - 配置项: config/simulation.json 中的 "constant" 字段
 #    - 行为: 维持任务池中任务数量恒定，每当任务被分配/完成后立即补充新任务
-#    - 适用场景: 算法基准测试，任务供给稳定可控
 #
 # 二、Realistic 模式（真实场景模式）
 #    - 配置项: config/simulation.json 中的 "realistic" 字段
 #    - 行为: 模拟真实世界的订单到达模式，任务生成有高峰期和低谷期
 #    - 核心参数:
-#      * total_tasks: 总任务数量上限（本项目 = 200）
-#      * cycle_length: 周期长度（本项目 = 100 steps，对应 10 秒真实时间）
-#      * peak_steps_per_task: 高峰期间隔（每 3 步约生成 1 个任务）
-#      * off_peak_steps_per_task: 低谷期间隔（每 12 步约生成 1 个任务）
-#      * peak_probability: 高峰窗口内使用高峰间隔的概率（30%）
-#    - 周期结构（100 steps = 10 秒）:
-#      [0, 25): 低谷期   [25, 50): 高峰窗口   [50, 100): 低谷期
+#      * total_tasks: 总任务数量上限
+#      * cycle_length: 周期长度（默认 500 steps，对应 50 秒真实时间）
+#      * peak_steps_per_task: 高峰期间隔（默认 20 步 ≈ 2 秒/任务）
+#      * off_peak_steps_per_task: 低谷期间隔（默认 60 步 ≈ 6 秒/任务）
+#      * peak_probability: 高峰窗口内使用高峰间隔的概率（默认 80%）
+#
+#    - 周期结构（500 steps = 50 秒）:
+#      [0, 125): 低谷期   [125, 250): 高峰窗口   [250, 500): 低谷期
+#
 #    - 高峰窗口内:
-#      - 30% 概率使用高峰间隔（3 步 ≈ 0.3 秒）
-#      - 70% 概率仍使用低谷间隔（12 步 ≈ 1.2 秒）
+#      - 80% 概率使用高峰间隔（20 步 ≈ 2 秒/任务）
+#      - 20% 概率仍使用低谷间隔（60 步 ≈ 6 秒/任务）
 #    - 所有间隔均有 ±50% 随机波动
-#    - 适用场景: 模拟真实运营环境，包含订单波峰波谷
 #
-# 时间换算: 1 step = 0.1 秒 (DRONE_TIME_STEP)，无人机速度 200 m/s
+# 三、热点区域功能（Hotspot）
+#    - 配置项: config/simulation.json 中的 "realistic.hotspot" 字段
+#    - 启用条件: hotspot.enabled = true
+#    - 核心参数:
+#      * probability: 本次任务使用热点区域的概率（默认 40%）
+#      * radius: 热点区域半径，单位为米（默认 100 米）
+#      * centers: 热点中心点坐标列表（UTM 坐标）
 #
-# 周期长度 = 10 秒 (= 假设100 steps)
-# │←── 2.5s ──→│←────── 2.5s (高峰窗口) ────→│←────────── 5s ──────────→│
-#    低谷期              高峰期(混合)                低谷期
-#    [0, 2.5s)          [2.5s, 5s)                 [5s, 10s)
-
-# 高峰期内任务间隔：
-#   - 30% 概率: ~0.3s/任务  (3步 × 0.1s)     → 非常密集
-#   - 70% 概率: ~1.2s/任务  (12步 × 0.1s)    → 和低谷一样
-
-# 低谷期内任务间隔：
-#   - 100%: ~1.2s/任务 (±50%波动 → 0.6s ~ 1.8s)
+#    - 任务生成策略（概率分布）:
+#      | 场景                     | 概率 |
+#      | 起点在热点，终点在普通区域 | 70% |
+#      | 起点和终点都在热点区域     | 20% |
+#      | 起点在普通区域，终点在热点 | 10% |
+#
+#    - 位置生成: 在热点圆形区域内使用极坐标随机生成
+#
 # =============================================================================
 
 class Task:
@@ -174,7 +178,7 @@ class ConstantModeGenerator:
 
 
 class RealisticModeGenerator:
-    """真实场景模式生成器：模拟高峰期/低谷期，总任务数固定"""
+    """真实场景模式生成器：模拟高峰期/低谷期，总任务数固定，支持热点区域"""
 
     def __init__(self, task_gen):
         self._gen = task_gen
@@ -187,6 +191,13 @@ class RealisticModeGenerator:
         self._next_task_step = 0
         self._tasks_generated = 0
 
+        # 热点区域配置
+        hotspot_cfg = REALISTIC_CFG.get("hotspot", {})
+        self._hotspot_enabled = bool(hotspot_cfg.get("enabled", True))
+        self._hotspot_prob = float(hotspot_cfg.get("probability", 0.7))
+        self._hotspot_radius = float(hotspot_cfg.get("radius", 200))
+        self._hotspot_centers = hotspot_cfg.get("centers", [])
+
     @property
     def initial_task_count(self):
         return self._initial_count
@@ -194,6 +205,11 @@ class RealisticModeGenerator:
     @property
     def total_tasks(self):
         return self._total_tasks
+
+    @property
+    def has_hotspot(self):
+        """检查是否配置了热点区域"""
+        return self._hotspot_enabled and len(self._hotspot_centers) > 0
 
     def reset(self):
         """重置生成器状态"""
@@ -217,6 +233,27 @@ class RealisticModeGenerator:
     def is_exhausted(self):
         """检查是否已经生成完所有任务"""
         return self._tasks_generated >= self._total_tasks
+
+    def use_hotspot(self):
+        """判断本次任务是否使用热点区域"""
+        if not self.has_hotspot:
+            return False
+        return random.random() < self._hotspot_prob
+
+    def generate_hotspot_position(self):
+        """在热点区域内生成一个随机位置"""
+        if not self.has_hotspot:
+            return None
+
+        center = random.choice(self._hotspot_centers)
+        # 在圆形区域内随机生成点（使用极坐标）
+        angle = random.uniform(0, 2 * 3.141592653589793)
+        r = random.uniform(0, self._hotspot_radius)
+
+        x = center[0] + r * random.uniform(0.8, 1.2) * math.cos(angle)
+        y = center[1] + r * random.uniform(0.8, 1.2) * math.sin(angle)
+
+        return (x, y)
 
     def _update_next_step(self, current_time, seed_offset=None):
         """更新下一个任务生成的步骤"""
@@ -404,7 +441,9 @@ class TaskGenerator:
         for _ in range(max(0, int(num_tasks))):
             self.task_counter += 1
             weight = random.randint(self.weight_min, self.weight_max)
-            source, destination = random.sample(self.destinations, 2)
+
+            # 根据模式生成起点和终点
+            source, destination = self._generate_source_destination(current_time)
 
             deadline_offset = random.randint(self.deadline_offset_min, self.deadline_offset_max)
             deadline = current_time + deadline_offset
@@ -422,6 +461,53 @@ class TaskGenerator:
                 )
             )
         return tasks
+
+    def _generate_source_destination(self, current_time):
+        """
+        根据模式生成起点和终点
+
+        Realistic模式支持热点区域地理聚集性
+        """
+        # Realistic 模式使用热点区域
+        if self._mode == self.MODE_REALISTIC:
+            gen = self._realistic_gen
+            if gen.has_hotspot and gen.use_hotspot():
+                # 使用热点区域生成起点和终点
+                return self._generate_hotspot_task()
+            else:
+                # 使用普通随机选择
+                return random.sample(self.destinations, 2)
+
+        # Constant 模式使用普通随机选择
+        return random.sample(self.destinations, 2)
+
+    def _generate_hotspot_task(self):
+        """
+        在热点区域内生成起点和终点
+
+        策略：
+        1. 选择一个热点中心
+        2. 70%概率：起点在热点区域，终点在普通区域
+        3. 20%概率：起点和终点都在热点区域
+        4. 10%概率：起点在普通区域，终点在热点区域
+        """
+        gen = self._realistic_gen
+        strategy = random.random()
+
+        if strategy < 0.7:
+            # 热点 -> 普通
+            source = gen.generate_hotspot_position()
+            destination = random.choice(self.destinations)
+        elif strategy < 0.9:
+            # 热点 -> 热点
+            source = gen.generate_hotspot_position()
+            destination = gen.generate_hotspot_position()
+        else:
+            # 普通 -> 热点
+            source = random.choice(self.destinations)
+            destination = gen.generate_hotspot_position()
+
+        return (source, destination)
 
     def generate_random_tasks(self, num_tasks=5, current_time=0):
         """直接生成随机任务（兼容旧接口）"""

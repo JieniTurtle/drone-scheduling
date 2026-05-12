@@ -18,7 +18,16 @@
       "peak_steps_per_task": 20,
       "off_peak_steps_per_task": 60,
       "peak_probability": 0.8,
-      "cycle_length": 500
+      "cycle_length": 500,
+      "hotspot": {
+        "enabled": true,
+        "probability": 0.4,
+        "radius": 100,
+        "centers": [
+          [359190.428233,3462301.042575],
+          [358744.300499, 3462283.547369]
+        ]
+      }
     }
   },
   "task": {
