@@ -6,20 +6,22 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from environment import Environment
 from backend_si.pso_scheduler import PSOScheduler
+from task_shower import TaskShowerManager
 
 if __name__ == "__main__":
     from task import TASK_GEN_MODE
 
     print("=" * 70)
     print("无人机配送调度仿真 - PSOScheduler（双通道 + 动态贪心，配置见 backend_si/config.yaml）")
-    mode_name = "恒定数量模式" if TASK_GEN_MODE == "constant" else "真实场景模式"
-    print(f"任务生成方式: {mode_name} ({TASK_GEN_MODE})")
+    print(f"任务生成方式: {TASK_GEN_MODE}")
     print("=" * 70)
 
     env = Environment('data/map/part_of_yangpu.osm', visualize=True)
 
     # 所有可调参数读自 backend_si/config.yaml；要换实验配置传 config_path=...
     scheduler = PSOScheduler(num_drones=len(env.drones), verbose=True)
+    task_shower = TaskShowerManager(update_interval=0.5)
+    task_shower.start()
 
     frame_count = 0
     done = False
@@ -32,9 +34,9 @@ if __name__ == "__main__":
 
         print(f"Frame: {frame_count}, Reward: {reward:.2f}")
         frame_count += 1
-        
-        
-        # 每60帧（约1秒）输出一次状态
+
+        task_shower.collect_and_update(env, observations)
+
         if frame_count % 60 == 0:
             free_drones = sum(1 for d in env.drones if d.is_free)
             busy_drones = sum(1 for d in env.drones if not d.is_free)
@@ -66,4 +68,5 @@ if __name__ == "__main__":
     for k, v in scheduler.get_stats().items():
         print(f"  {k}: {v}")
     print("=" * 70)
-        
+
+    task_shower.stop()

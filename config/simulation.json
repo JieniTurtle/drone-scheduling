@@ -13,11 +13,11 @@
       "initial_task_count": 8
     },
     "realistic": {
-      "total_tasks": 200,
-      "initial_task_count": 10,
-      "peak_steps_per_task": 3,
-      "off_peak_steps_per_task": 12,
-      "peak_probability": 0.3,
+      "total_tasks": 100,
+      "initial_task_count": 5,
+      "peak_steps_per_task": 20,
+      "off_peak_steps_per_task": 60,
+      "peak_probability": 0.8,
       "cycle_length": 500
     }
   },
