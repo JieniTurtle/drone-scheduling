@@ -5,8 +5,6 @@ action_selector: "epsilon_greedy"
 epsilon_start: 1
 epsilon_finish: 0.02
 epsilon_anneal_time: 80000
-unique_task_assignment: False
-noop_action: 0
 
 runner: "episode"
 

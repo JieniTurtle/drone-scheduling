@@ -3,7 +3,8 @@
     "max_unassigned_tasks": 5,
     "episode_max_steps": 1200,
     "num_drones": 3,
-    "initial_task_count": 8
+    "initial_task_count": 8,
+    "print_route_debug": false
   },
   "task": {
     "clicked_positions_file": "clicked_positions.txt",

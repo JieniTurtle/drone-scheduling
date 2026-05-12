@@ -13,6 +13,7 @@ from tools.osm import load_map_data, get_building_location_by_name, get_global_b
 from task import TaskGenerator
 from map_drawer import OptimizedMapViewer
 from task import WAREHOUSE_POS
+from seed_interface import apply_seed
 
 
 CFG = get_shared_config()
@@ -21,6 +22,7 @@ MAX_UNASSIGNED_TASKS = int(ENV_CFG.get("max_unassigned_tasks", 5))
 DEFAULT_EPISODE_MAX_STEPS = int(ENV_CFG.get("episode_max_steps", 1200))
 DEFAULT_NUM_DRONES = int(ENV_CFG.get("num_drones", 3))
 DEFAULT_INITIAL_TASK_COUNT = int(ENV_CFG.get("initial_task_count", 8))
+PRINT_ROUTE_DEBUG = bool(ENV_CFG.get("print_route_debug", False))
 
 class Environment:
     def __init__(self, osm_file_path, visualize=False, episode_max_steps=DEFAULT_EPISODE_MAX_STEPS):
@@ -79,6 +81,8 @@ class Environment:
         self.viewer = None
         if visualize:
             self.viewer = OptimizedMapViewer('data/map/part_of_yangpu.osm')
+
+        self._episode_seed = None
 
         # print(get_building_location_by_name( self.high_buildings, "衷和楼"))
         print(f"加载了 {len(self.high_buildings)} 个具有高度信息的建筑物")
@@ -259,7 +263,19 @@ class Environment:
 
         return self._obs(), self._reward(), done, info
     
-    def reset(self):
+    def set_seed(self, seed):
+        """Set the random seed for the next episode.
+
+        Seed range: 0 <= seed <= 2**32 - 1. None disables deterministic seeding.
+        """
+        self._episode_seed = apply_seed(seed)
+
+    def reset(self, seed=None):
+        if seed is not None:
+            self.set_seed(seed)
+        elif self._episode_seed is not None:
+            apply_seed(self._episode_seed)
+
         self.unassigned_tasks = []
         NUM_DRONES = len(self.drones) if self.drones else DEFAULT_NUM_DRONES
         self.drones = [
@@ -439,9 +455,10 @@ class Environment:
             
             current_pos = dest
         
-        print(f"Full planned route for drone {drone.drone_id}: {full_route}")
-        elapsed = time.perf_counter() - start_time
-        print(f"assign_task elapsed: {elapsed:.6f} seconds")
+        if PRINT_ROUTE_DEBUG:
+            print(f"Full planned route for drone {drone.drone_id}: {full_route}")
+            elapsed = time.perf_counter() - start_time
+            print(f"assign_task elapsed: {elapsed:.6f} seconds")
         
         # 验证整个路线是否与建筑物相交
         self.verify_route_with_types(full_route)
