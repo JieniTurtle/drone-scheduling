@@ -8,6 +8,8 @@ _DEFAULT_CONFIG = {
         "episode_max_steps": 1200,
         "num_drones": 3,
         "initial_task_count": 8,
+        "allow_multi_task": True,
+        "max_obs_tasks": 20,
     },
     "task": {
         "clicked_positions_file": "clicked_positions.txt",

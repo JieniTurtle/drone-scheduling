@@ -21,6 +21,8 @@ ENV_CFG = CFG.get("environment", {})
 DEFAULT_EPISODE_MAX_STEPS = int(ENV_CFG.get("episode_max_steps", 1200))
 DEFAULT_NUM_DRONES = int(ENV_CFG.get("num_drones", 3))
 PRINT_ROUTE_DEBUG = bool(ENV_CFG.get("print_route_debug", False))
+ALLOW_MULTI_TASK = bool(ENV_CFG.get("allow_multi_task", True))
+MAX_OBS_TASKS = int(ENV_CFG.get("max_obs_tasks", 20))
 
 class Environment:
     def __init__(self, osm_file_path, visualize=False, episode_max_steps=DEFAULT_EPISODE_MAX_STEPS):
@@ -106,6 +108,42 @@ class Environment:
         print(f"  状态: {status}")
         print(f"{'='*70}")
     
+    def _record_task_completion(self, drone_idx, assignment):
+        """记录单个任务完成的统计数据"""
+        completed_task = assignment['task']
+        start_time = assignment['start_time']
+        completion_time = self.current_time
+        delivery_time = completion_time - start_time
+
+        deadline = completed_task.get_deadline()
+        if deadline is not None:
+            delay = max(0, completion_time - deadline)
+        else:
+            delay = 0
+
+        is_on_time = delay <= 0
+        self.total_completed_tasks += 1
+        self.total_delay += float(delay)
+        self.total_delivery_time += float(delivery_time)
+        if is_on_time:
+            self.total_on_time_tasks += 1
+
+        self.completed_tasks.append({
+            'task': completed_task,
+            'completion_time': completion_time,
+            'delivery_time': delivery_time,
+            'delay': delay
+        })
+
+        if PRINT_ROUTE_DEBUG:
+            drone_id = self.drones[drone_idx].drone_id if drone_idx < len(self.drones) else f"drone_{drone_idx}"
+            expected_time = deadline - start_time if deadline else 0
+            self._print_task_completion(
+                drone_id, completed_task.task_id, delivery_time,
+                expected_time, delay, is_on_time,
+                completed_task.get_priority(), completed_task.get_weight()
+            )
+
     def get_statistics(self):
         """获取当前统计指标"""
         completion_rate = 0.0
@@ -157,6 +195,15 @@ class Environment:
         for drone_idx, task_ids in actions.items():
             if drone_idx < len(self.drones):
                 drone = self.drones[drone_idx]
+
+                # 判断无人机是否正在飞往某个取货点（尚未抵达 source 航点）
+                pending_source = None
+                if not drone.is_free:
+                    for wp in drone.scheduled_position:
+                        if len(wp) >= 3 and wp[2] == 'source':
+                            pending_source = (wp[0], wp[1])
+                            break
+
                 for task_id in task_ids:
                     if task_id is not None:
                         # 找到对应的任务
@@ -165,18 +212,48 @@ class Environment:
                             if task.task_id == task_id:
                                 task_to_assign = task
                                 break
-                        
+
                         if task_to_assign is not None:
-                            # 记录任务分配（包含开始时间）
-                            self.drone_assignments[drone_idx] = {
-                                'task': task_to_assign,
-                                'start_time': self.current_time
-                            }
-                            
-                            # 规划路线
-                            route = self.plan_route_for_tasks(drone, [task_to_assign])
-                            # 分配路线给无人机
-                            drone.schedule_route(route, task_to_assign.task_id)
+                            same_source = (
+                                ALLOW_MULTI_TASK
+                                and pending_source is not None
+                                and task_to_assign.get_source() == pending_source
+                            )
+
+                            if same_source:
+                                # 同源追加：从当前路线最后一个航点规划到新目的地
+                                last_wp = drone.scheduled_position[-1]
+                                last_pos = (last_wp[0], last_wp[1])
+                                new_route = self.plan_route_around_buildings(
+                                    last_pos, task_to_assign.get_destination()
+                                )
+                                typed_route = []
+                                for j, pt in enumerate(new_route):
+                                    tag = 'dest' if j == len(new_route) - 1 else 'waypoint'
+                                    typed_route.append((pt[0], pt[1], tag))
+                                drone.append_route(typed_route)
+
+                                # 追加到分配记录（兼容旧格式）
+                                if drone_idx not in self.drone_assignments:
+                                    self.drone_assignments[drone_idx] = []
+                                elif isinstance(self.drone_assignments[drone_idx], dict):
+                                    self.drone_assignments[drone_idx] = [
+                                        self.drone_assignments[drone_idx]
+                                    ]
+                                self.drone_assignments[drone_idx].append({
+                                    'task': task_to_assign,
+                                    'start_time': self.current_time
+                                })
+                            else:
+                                # 新任务：完整规划路线
+                                route = self.plan_route_for_tasks(drone, [task_to_assign])
+                                drone.schedule_route(route, task_to_assign.task_id)
+                                self.drone_assignments[drone_idx] = [{
+                                    'task': task_to_assign,
+                                    'start_time': self.current_time
+                                }]
+                                pending_source = task_to_assign.get_source()
+
                             # 从未分配任务中移除
                             self.task_generator.unassigned_tasks.remove(task_to_assign)
                             # 更新任务状态
@@ -190,8 +267,9 @@ class Environment:
         if new_tasks:
             self.total_generated_tasks += len(new_tasks)
 
-        # 记录更新前的电量状态，用于统计耗电量
+        # 记录更新前的电量状态和航点，用于统计耗电量和检测任务完成
         prev_batteries = [drone.current_battery for drone in self.drones]
+        prev_scheduled = [list(drone.scheduled_position) for drone in self.drones]
 
         for drone in self.drones:
             drone.update()
@@ -199,45 +277,49 @@ class Environment:
         # 统计耗电量和充电量
         for i, drone in enumerate(self.drones):
             battery_change = prev_batteries[i] - drone.current_battery
-            
+
             if battery_change > 0:
                 # 消耗了电量
                 self.total_energy_consumed += battery_change
 
-        # 检测任务完成：通过 executing_task_id 判断（刚从执行中变为None表示任务完成）
-        # 遍历所有无人机，检查是否有刚完成的任务
+        # 检测任务完成：
+        # 1) 'dest' 航点被弹出 → 对应任务完成（支持一机多任务）
+        # 2) is_free 转换兜底（充电自动航线等无 dest 航点的场景）
         for i, drone in enumerate(self.drones):
-            if not self._prev_free_status.get(i, True) and drone.is_free:
-                # 无人机刚刚完成任务
-                if i in self.drone_assignments:
-                    assignment_info = self.drone_assignments[i]
-                    completed_task = assignment_info['task']
-                    start_time = assignment_info['start_time']
-                    completion_time = self.current_time
-                    delivery_time = completion_time - start_time
-                    
-                    # 计算延迟
-                    deadline = completed_task.get_deadline()
-                    if deadline is not None:
-                        delay = max(0, completion_time - deadline)
-                    else:
-                        delay = 0
+            prev = prev_scheduled[i]
+            curr = drone.scheduled_position
 
-                    is_on_time = delay <= 0
-                    self.total_completed_tasks += 1
-                    self.total_delay += float(delay)
-                    self.total_delivery_time += float(delivery_time)
-                    if is_on_time:
-                        self.total_on_time_tasks += 1
-                    
-                    self.completed_tasks.append({
-                        'task': completed_task,
-                        'completion_time': completion_time,
-                        'delivery_time': delivery_time,
-                        'delay': delay
-                    })
-                    # 移除分配记录
-                    del self.drone_assignments[i]
+            # 航点弹出检测
+            if len(prev) > len(curr) and len(prev) > 0:
+                popped = prev[0]
+                if len(popped) >= 3 and popped[2] == 'dest':
+                    dest_pos = (popped[0], popped[1])
+                    if i in self.drone_assignments:
+                        assignments = self.drone_assignments[i]
+                        if isinstance(assignments, list):
+                            for assignment in list(assignments):
+                                if assignment['task'].get_destination() == dest_pos:
+                                    self._record_task_completion(i, assignment)
+                                    assignments.remove(assignment)
+                                    break
+                        elif isinstance(assignments, dict):
+                            if assignments['task'].get_destination() == dest_pos:
+                                self._record_task_completion(i, assignments)
+                                del self.drone_assignments[i]
+
+            # is_free 转换兜底：无人机变为空闲时清理剩余分配记录
+            if not self._prev_free_status.get(i, True) and drone.is_free:
+                if i in self.drone_assignments:
+                    assignments = self.drone_assignments[i]
+                    if isinstance(assignments, list):
+                        for assignment in list(assignments):
+                            self._record_task_completion(i, assignment)
+                            assignments.remove(assignment)
+                        if not assignments:
+                            del self.drone_assignments[i]
+                    elif isinstance(assignments, dict):
+                        self._record_task_completion(i, assignments)
+                        del self.drone_assignments[i]
 
         # 更新每个无人机之前的空闲状态
         self._prev_free_status = {i: drone.is_free for i, drone in enumerate(self.drones)}
@@ -329,14 +411,18 @@ class Environment:
                 reward += 100
             elif priority == 2:
                 reward += 80
+            elif priority == 3:
+                reward += 50  
+            elif priority == 4:
+                reward += 30
             else:
-                reward += 50  # 默认奖励
+                reward += 10
             
             # 检查是否超时
             deadline = task.get_deadline()
             if deadline is not None and completion_time > deadline:
                 overtime = completion_time - deadline
-                reward -= 10 * overtime
+                reward = -0.01 * overtime * reward  # 超时惩罚，惩罚程度随超时时间增加
         
         # 清空已处理的完成任务
         self.completed_tasks.clear()
@@ -383,10 +469,50 @@ class Environment:
             })
         
         # 3. 所有无人机的is_free掩码
+        # 当 allow_multi_task 启用时：不空闲但尚未抵达取货点的 drone 仍可接同源任务
         drone_free_masks = []
         for drone in self.drones:
-            free_mask = [drone.is_free for task in self.task_generator.unassigned_tasks]
+            if drone.is_free:
+                free_mask = [True for _ in self.task_generator.unassigned_tasks]
+            elif ALLOW_MULTI_TASK:
+                pending_source = None
+                for wp in drone.scheduled_position:
+                    if len(wp) >= 3 and wp[2] == 'source':
+                        pending_source = (wp[0], wp[1])
+                        break
+                if pending_source is not None:
+                    free_mask = [
+                        task.get_source() == pending_source
+                        for task in self.task_generator.unassigned_tasks
+                    ]
+                else:
+                    free_mask = [False for _ in self.task_generator.unassigned_tasks]
+            else:
+                free_mask = [False for _ in self.task_generator.unassigned_tasks]
             drone_free_masks.append(free_mask)
+
+        # 固定观察长度：截断或填充到 MAX_OBS_TASKS
+        current_len = len(unassigned_tasks_info)
+        if current_len > MAX_OBS_TASKS:
+            unassigned_tasks_info = unassigned_tasks_info[:MAX_OBS_TASKS]
+            for i in range(len(drone_free_masks)):
+                drone_free_masks[i] = drone_free_masks[i][:MAX_OBS_TASKS]
+        elif current_len < MAX_OBS_TASKS:
+            pad_count = MAX_OBS_TASKS - current_len
+            pad_tasks = [
+                {
+                    'task_id': f'__pad_{k}',
+                    'source': [0.0, 0.0],
+                    'destination': [0.0, 0.0],
+                    'remaining_time': -1.0,
+                    'priority': 0,
+                    'weight': 0.0,
+                }
+                for k in range(pad_count)
+            ]
+            unassigned_tasks_info.extend(pad_tasks)
+            for i in range(len(drone_free_masks)):
+                drone_free_masks[i].extend([False] * pad_count)
 
         # 3b. 扁平的 is_free 状态（与 unassigned_tasks 是否为空解耦，事件驱动调度依赖此字段）
         drone_is_free = [drone.is_free for drone in self.drones]

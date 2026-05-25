@@ -311,6 +311,9 @@ class TaskGenerator:
         self.priority_max = int(task_cfg.get("priority_max", 5))
         self.deadline_offset_min = int(task_cfg.get("deadline_offset_min", 200))
         self.deadline_offset_max = int(task_cfg.get("deadline_offset_max", 500))
+        self._same_source_prob = float(
+            _TASK_GEN_CFG.get("same_source_prob", 0.0)
+        )
 
         # 模式相关状态
         self._mode = mode if mode else TASK_GEN_MODE
@@ -467,7 +470,23 @@ class TaskGenerator:
         根据模式生成起点和终点
 
         Realistic模式支持热点区域地理聚集性
+        当 same_source_prob > 0 时，有一定概率复用已有未分配任务的起点，
+        模拟同一取货点产生多个订单的场景。
         """
+        # 同源复用：从现有未分配任务中随机选取一个 source
+        if (self._same_source_prob > 0
+                and len(self._unassigned_tasks) > 0
+                and random.random() < self._same_source_prob):
+            existing_task = random.choice(self._unassigned_tasks)
+            source = existing_task.get_source()
+            # 选择一个不同的目的地
+            destination = random.choice(self.destinations)
+            retries = 0
+            while destination == source and retries < 10:
+                destination = random.choice(self.destinations)
+                retries += 1
+            return (source, destination)
+
         # Realistic 模式使用热点区域
         if self._mode == self.MODE_REALISTIC:
             gen = self._realistic_gen
