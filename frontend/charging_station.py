@@ -1,4 +1,4 @@
-from config.settings import get_shared_config
+from config.config_loder import get_shared_config
 
 
 class ChargingStation:

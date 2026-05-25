@@ -316,10 +316,6 @@ class OptimizedMapViewer:
             
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左键
-                    # 记录左键点击在地图上的坐标并追加保存到文件
-                    world_pos = self.screen_to_world(event.pos[0], event.pos[1])
-                    self.save_click_position(world_pos)
-
                     # 检查是否点击了建筑
                     hover_idx = self.find_hovered_building(event.pos)
                     if hover_idx is not None:
@@ -370,14 +366,7 @@ class OptimizedMapViewer:
         
         return True
 
-    def save_click_position(self, world_pos):
-        """将地图坐标追加写入文件。"""
-        try:
-            with open('clicked_positions.txt', 'a', encoding='utf-8') as f:
-                f.write(f"{world_pos[0]:.6f},{world_pos[1]:.6f}\n")
-        except Exception as e:
-            print(f"Failed to save click position: {e}")
-    
+
     def draw(self, drones=[]):
         """主绘制函数"""
         self.screen.fill(self.COLORS['BACKGROUND'])

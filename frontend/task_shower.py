@@ -484,7 +484,7 @@ class TaskShowerManager:
             return None
 
         # 获取 cycle_length 配置
-        from config.settings import get_shared_config
+        from config.config_loder import get_shared_config
         cycle_length = get_shared_config().get("task_generation", {}).get("realistic", {}).get("cycle_length", 500)
 
         # 计算当前时间在周期中的位置

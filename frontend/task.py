@@ -1,12 +1,11 @@
+import json
 import math
 import random
 
-from config.settings import get_shared_config
+from config.config_loder import get_shared_config
 
 
 _TASK_CFG = get_shared_config().get("task", {})
-WAREHOUSE_ROUTE_ID = _TASK_CFG.get("warehouse_route_id", "1364970737#0")
-CHARGER_ROUTE_ID = _TASK_CFG.get("charger_route_id", "125465016")
 _warehouse_pos = _TASK_CFG.get("warehouse_pos", [357600.574872369, 3462308.772003661])
 WAREHOUSE_POS = (float(_warehouse_pos[0]), float(_warehouse_pos[1]))
 
@@ -128,19 +127,27 @@ class Task:
 
 
 def load_destinations_from_file(file_path):
-    """从文件读取配送目的地坐标列表"""
+    """从文件读取配送目的地坐标列表，支持 JSON 和 CSV 格式"""
     destinations = []
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split(',')
-                if len(parts) != 2:
-                    continue
-                x, y = float(parts[0]), float(parts[1])
-                destinations.append((x, y))
+        if file_path.endswith('.json'):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            positions = data.get("positions", [])
+            for pos in positions:
+                if len(pos) == 2:
+                    destinations.append((float(pos[0]), float(pos[1])))
+        else:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(',')
+                    if len(parts) != 2:
+                        continue
+                    x, y = float(parts[0]), float(parts[1])
+                    destinations.append((x, y))
     except FileNotFoundError:
         print(f"Warning: {file_path} not found. No destinations loaded.")
     return destinations
@@ -298,7 +305,7 @@ class TaskGenerator:
         """
         task_cfg = get_shared_config().get("task", {})
         if file_path is None:
-            file_path = task_cfg.get("clicked_positions_file", "clicked_positions.txt")
+            file_path = task_cfg.get("positions_file", "../config/positions.json")
 
         if possible_destinations is None:
             possible_destinations = load_destinations_from_file(file_path)

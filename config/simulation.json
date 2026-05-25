@@ -1,9 +1,7 @@
 {
   "environment": {
-    "max_unassigned_tasks": 5,
-    "episode_max_steps": 1200,
+    "episode_max_steps": 20000,
     "num_drones": 3,
-    "initial_task_count": 8,
     "print_route_debug": false,
     "allow_multi_task": true,
     "max_obs_tasks": 20
@@ -34,15 +32,13 @@
     }
   },
   "task": {
-    "clicked_positions_file": "clicked_positions.txt",
+    "positions_file": "../config/positions.json",
     "weight_min": 1,
     "weight_max": 4,
     "priority_min": 1,
     "priority_max": 5,
     "deadline_offset_min": 200,
     "deadline_offset_max": 500,
-    "warehouse_route_id": "1364970737#0",
-    "charger_route_id": "125465016",
     "warehouse_pos": [357600.574872369, 3462308.772003661]
   },
   "charging_station": {

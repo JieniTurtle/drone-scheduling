@@ -7,7 +7,7 @@ from shapely.geometry import Point, LineString
 import math
 from drone import Drone, BATTERY_CONSUMPTION_BASE, BATTERY_LOAD_PENALTY_FACTOR
 from charging_station import DEFAULT_CHARGING_STATION
-from config.settings import get_shared_config
+from config.config_loder import get_shared_config
 # from test import OptimizedMapViewer
 from tools.osm import load_map_data, get_building_location_by_name, get_global_bounds
 from task import TaskGenerator
@@ -33,7 +33,7 @@ class Environment:
         self.high_buildings = [b for b in buildings_with_height if b['height'] is not None and b['height'] > 20]
 
         task_cfg = CFG.get("task", {})
-        task_file = task_cfg.get("clicked_positions_file", 'clicked_positions.txt')
+        task_file = task_cfg.get("positions_file", '../config/positions.json')
         self.task_generator = TaskGenerator(file_path=task_file)
         self.unassigned_tasks = []  # 保持向后兼容，通过 task_generator 访问
         self.drones = []  # 初始化无人机列表

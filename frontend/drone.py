@@ -1,6 +1,6 @@
 import math
 import random
-from config.settings import get_shared_config
+from config.config_loder import get_shared_config
 from charging_station import DEFAULT_CHARGING_STATION
 
 
