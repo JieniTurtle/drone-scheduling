@@ -201,7 +201,7 @@ class EnvDroneEnv(MultiAgentEnv):
             rem = self.max_remaining_time
         rem = float(np.clip(rem / max(self.max_remaining_time, 1.0), 0.0, 1.0))
 
-        priority = float(task.get("priority", 0.0)) / 5.0
+        priority = float(task.get("priority", 0.0)) / 3.0
         weight = float(task.get("weight", 0.0)) / 10.0
         active = 1.0
         return [nsx, nsy, ndx, ndy, rem, priority, weight, active]

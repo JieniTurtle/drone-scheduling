@@ -6,7 +6,7 @@ import datetime
 from shapely.geometry import Point, LineString
 import math
 from drone import Drone, BATTERY_CONSUMPTION_BASE, BATTERY_LOAD_PENALTY_FACTOR
-from charging_station import DEFAULT_CHARGING_STATION
+from charging_station import DEFAULT_CHARGING_STATIONS
 from config.config_loder import get_shared_config
 # from test import OptimizedMapViewer
 from tools.osm import load_map_data, get_building_location_by_name, get_global_bounds
@@ -100,7 +100,7 @@ class Environment:
         print(f"📦 任务完成: {task_id}")
         print(f"{'='*70}")
         print(f"  无人机: {drone_id}")
-        print(f"  优先级: {priority}/5  |  货物重量: {weight}kg")
+        print(f"  优先级: {priority}/3  |  货物重量: {weight}kg")
         print(f"  配送时长: {delivery_time:.1f} 时间单位")
         print(f"  预期时长: {expected_time:.1f} 时间单位")
         if not is_on_time:
@@ -411,12 +411,8 @@ class Environment:
                 reward += 100
             elif priority == 2:
                 reward += 80
-            elif priority == 3:
-                reward += 50  
-            elif priority == 4:
-                reward += 30
             else:
-                reward += 10
+                reward += 50
             
             # 检查是否超时
             deadline = task.get_deadline()
@@ -527,11 +523,19 @@ class Environment:
             for drone in self.drones
         ]
 
-        # 5. 充电站信息（位置 + 充电功率），与 frontend/drone.py 实际使用的为同一个站点
-        station_pos = DEFAULT_CHARGING_STATION.get_position()
-        charging_station_info = {
-            'position': [station_pos[0], station_pos[1]],
-            'charging_power': DEFAULT_CHARGING_STATION.charging_power,
+        # 5. 充电站信息（位置 + 充电功率），与 frontend/drone.py 实际使用的站点一致
+        charging_stations_info = [
+            {
+                'station_id': s.station_id,
+                'position': [s.x, s.y],
+                'charging_power': s.charging_power,
+            }
+            for s in DEFAULT_CHARGING_STATIONS
+        ]
+        # 向后兼容：单站字段
+        charging_station_info = charging_stations_info[0] if charging_stations_info else {
+            'position': [0.0, 0.0],
+            'charging_power': 50.0,
         }
 
         return {
@@ -540,7 +544,8 @@ class Environment:
             'drone_free_masks': drone_free_masks,
             'drone_is_free': drone_is_free,
             'drone_batteries': drone_batteries,
-            'charging_station': charging_station_info,
+            'charging_station': charging_station_info,   # 向后兼容
+            'charging_stations': charging_stations_info,  # 新：多站列表
         }
     
     def plan_route_for_tasks(self, drone, tasks):

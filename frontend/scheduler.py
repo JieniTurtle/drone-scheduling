@@ -18,7 +18,11 @@ class GreedyScheduler:
         返回: {drone_index: [assigned_task_id]} 字典（每个无人机最多分配一个任务）
         """
         drone_positions = observation['drone_positions']
-        unassigned_tasks_info = list(observation['unassigned_tasks'])
+        # 过滤掉 padding 占位任务，避免分配无效的 '__pad_X' task_id
+        unassigned_tasks_info = [
+            t for t in observation['unassigned_tasks']
+            if not str(t.get('task_id', '')).startswith('__pad_')
+        ]
         drone_free_masks = observation['drone_free_masks']
 
         if not unassigned_tasks_info:
@@ -26,10 +30,15 @@ class GreedyScheduler:
 
         assignments = {}
 
+        drone_is_free = observation.get('drone_is_free', [])
+
         # 为每个空闲且电量充足的无人机分配任务
         for drone_idx, (drone_pos, free_mask) in enumerate(zip(drone_positions, drone_free_masks)):
-            # 检查无人机是否空闲（所有任务的掩码都为True表示空闲）
-            if not all(free_mask):
+            # 优先使用 observation 中的 drone_is_free 字段（不受 padding 影响）
+            if drone_is_free and len(drone_is_free) > drone_idx:
+                if not drone_is_free[drone_idx]:
+                    continue
+            elif not all(free_mask):  # fallback: 无 drone_is_free 时降级到 free_mask 判断
                 continue
 
             # 如果没有任务可分配，跳过

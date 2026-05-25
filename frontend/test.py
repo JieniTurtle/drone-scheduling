@@ -16,7 +16,7 @@ if __name__ == "__main__":
     print(f"任务生成方式: {TASK_GEN_MODE}")
     print("=" * 70)
 
-    env = Environment('data/map/part_of_yangpu.osm', visualize=True)
+    env = Environment('data/map/part_of_yangpu.osm', visualize=False)
 
     # 所有可调参数读自 backend_si/config.yaml；要换实验配置传 config_path=...
     scheduler = PSOScheduler(num_drones=len(env.drones), verbose=True)

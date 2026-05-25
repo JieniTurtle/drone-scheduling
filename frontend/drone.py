@@ -1,7 +1,7 @@
 import math
 import random
 from config.config_loder import get_shared_config
-from charging_station import DEFAULT_CHARGING_STATION
+from charging_station import DEFAULT_CHARGING_STATIONS, find_nearest_station
 
 
 _DRONE_CFG = get_shared_config().get("drone", {})
@@ -41,6 +41,7 @@ class Drone:
         self.current_battery = battery_capacity  # 当前电量 (Wh)，初始满电
         self.is_charging = False  # 是否正在充电
         self.charging_station_id = None  # 当前所在充电站ID
+        self._charging_power = 50.0  # 当前充电站的充电功率
         
     # ==================== 电量相关方法 ====================
     
@@ -72,10 +73,12 @@ class Drone:
         
         return total_consumption
     
-    def start_charging(self, station_id):
+    def start_charging(self, station_id, charging_power=None):
         """开始充电"""
         self.is_charging = True
         self.charging_station_id = station_id
+        if charging_power is not None:
+            self._charging_power = float(charging_power)
         self.is_free = False  # 充电中不可接单
     
     def stop_charging(self):
@@ -146,7 +149,7 @@ class Drone:
         
         # 如果正在充电，不移动，只充电
         if self.is_charging:
-            self.charge(DEFAULT_CHARGING_STATION.charging_power, time_step)
+            self.charge(self._charging_power, time_step)
             return
         
         if self.scheduled_position:
@@ -178,14 +181,17 @@ class Drone:
                     self.executing_task_id = None  # 清除执行中任务ID
                     # 任务完成后：根据电量决定去向
                     if self.is_low_battery():
-                        # 电量不足，检查是否已在充电站
+                        # 找到最近的充电站
                         drone_pos = (self.x, self.y)
-                        station_pos = DEFAULT_CHARGING_STATION.get_position()
+                        nearest = find_nearest_station(DEFAULT_CHARGING_STATIONS, drone_pos)
+                        if nearest is None:
+                            pass
+                        station_pos = nearest.get_position()
                         if drone_pos == station_pos:
                             # 已在充电站，开始充电
-                            self.start_charging(DEFAULT_CHARGING_STATION.station_id)
+                            self.start_charging(nearest.station_id, nearest.charging_power)
                         else:
-                            # 不在充电站，飞往充电站
+                            # 不在充电站，飞往最近的充电站
                             self.is_free = False
                             self.schedule_route([station_pos])
                     # else: 电量充足，原地待机，等待调度器分配新任务

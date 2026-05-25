@@ -8,7 +8,7 @@ from collections import defaultdict
 from drone import Drone
 from frontend.charging_station import ChargingStation
 from tools.osm import load_map_data
-from drone import DEFAULT_CHARGING_STATION 
+from drone import DEFAULT_CHARGING_STATIONS
 
 class OptimizedMapViewer:
     """优化的地图查看器，使用空间索引提高性能"""
@@ -390,7 +390,9 @@ class OptimizedMapViewer:
                 is_selected = (self.selected_building == idx)
                 self.draw_building(building, is_hovered, is_selected)
         
-        self.draw_charging_station(DEFAULT_CHARGING_STATION)
+        # 绘制所有充电站
+        for station in DEFAULT_CHARGING_STATIONS:
+            self.draw_charging_station(station)
 
         # 绘制所有无人机的路线（先画路线，再画无人机）
         for drone in drones:

@@ -1,24 +1,24 @@
 {
   "environment": {
-    "episode_max_steps": 20000,
-    "num_drones": 3,
+    "episode_max_steps": 30000,
+    "num_drones": 10,
     "print_route_debug": false,
     "allow_multi_task": true,
-    "max_obs_tasks": 20
+    "max_obs_tasks": 50
   },
   "task_generation": {
     "mode": "realistic",
     "same_source_prob": 0.3,
     "constant": {
-      "max_unassigned_tasks": 5,
-      "initial_task_count": 8
+      "max_unassigned_tasks": 50,
+      "initial_task_count": 50
     },
     "realistic": {
-      "total_tasks": 100,
-      "initial_task_count": 5,
-      "peak_steps_per_task": 20,
-      "off_peak_steps_per_task": 60,
-      "peak_probability": 0.8,
+      "total_tasks": 300,
+      "initial_task_count": 20,
+      "peak_steps_per_task": 3,
+      "off_peak_steps_per_task": 7,
+      "peak_probability": 0.85,
       "cycle_length": 500,
       "hotspot": {
         "enabled": true,
@@ -36,17 +36,23 @@
     "weight_min": 1,
     "weight_max": 4,
     "priority_min": 1,
-    "priority_max": 5,
+    "priority_max": 3,
     "deadline_offset_min": 200,
     "deadline_offset_max": 500,
     "warehouse_pos": [357600.574872369, 3462308.772003661]
   },
-  "charging_station": {
-    "station_id": 0,
-    "x": 356000.0,
-    "y": 3463000.0,
-    "charging_power": 50
-  },
+  "charging_stations": [
+    {"station_id": 0, "x": 356000.0, "y": 3463000.0, "charging_power": 50},
+    {"station_id": 1, "x": 356500.0, "y": 3462400.0, "charging_power": 50},
+    {"station_id": 2, "x": 357200.0, "y": 3463000.0, "charging_power": 50},
+    {"station_id": 3, "x": 358000.0, "y": 3462400.0, "charging_power": 50},
+    {"station_id": 4, "x": 358744.0, "y": 3462500.0, "charging_power": 50},
+    {"station_id": 5, "x": 359190.0, "y": 3462500.0, "charging_power": 50},
+    {"station_id": 6, "x": 356500.0, "y": 3462700.0, "charging_power": 50},
+    {"station_id": 7, "x": 357600.0, "y": 3462700.0, "charging_power": 50},
+    {"station_id": 8, "x": 358500.0, "y": 3462750.0, "charging_power": 50},
+    {"station_id": 9, "x": 359000.0, "y": 3462200.0, "charging_power": 50}
+  ],
   "drone": {
     "battery_capacity": 15000.0,
     "battery_consumption_base": 0.5,
@@ -55,11 +61,6 @@
     "speed": 200.0,
     "time_step": 0.1,
     "carrying_capacity": 5
-  },
-  "backend_wx": {
-    "max_tasks": 5,
-    "max_remaining_time": 600.0,
-    "map_relative_path": "data/map/part_of_yangpu.osm"
   },
   "metrics": {
     "compare_dir": "results/compare",

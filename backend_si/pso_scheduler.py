@@ -215,8 +215,7 @@ class PSOOptimizer:
             drone_capacity = drone_info.get('capacity', 5)
             battery_capacity = drone_info.get('battery_capacity', 15000.0)
             current_battery = drone_info.get('battery', battery_capacity)
-            station_pos = tuple(drone_info.get('charging_station_position', drone_pos))
-            charging_power = drone_info.get('charging_power', 50.0)
+            charging_stations = drone_info.get('charging_stations', [])
             warehouse_pos = tuple(drone_info.get('home_position', drone_pos))
 
             current_pos = drone_pos
@@ -232,10 +231,17 @@ class PSOOptimizer:
                 task = tasks_info[task_idx]
                 task_weight = task['weight']
 
-                # 任务开始前：若电量低于阈值，先去充电站补电（与 drone.py 中
-                # 任务结束后判断 is_low_battery → 飞往充电站的逻辑一致）
+                # 任务开始前：若电量低于阈值，先去最近的充电站补电（与 drone.py 中
+                # 任务结束后判断 is_low_battery → 飞往最近充电站的逻辑一致）
                 if (battery_capacity > 0
-                        and current_battery / battery_capacity < self.battery_low_threshold):
+                        and current_battery / battery_capacity < self.battery_low_threshold
+                        and charging_stations):
+                    # 找到最近的充电站
+                    nearest = min(charging_stations,
+                                  key=lambda s: self.euclidean_distance(
+                                      current_pos, tuple(s['position'])))
+                    station_pos = tuple(nearest['position'])
+                    charging_power = float(nearest.get('charging_power', 50.0))
                     dist_to_station = self.euclidean_distance(current_pos, station_pos)
                     consumed = self._battery_consumption(
                         dist_to_station, current_load, drone_capacity)
@@ -632,12 +638,24 @@ class PSOScheduler:
         self._flush_buffer_with_pso(observation, current_time, reason)
 
     def _flush_buffer_with_pso(self, observation, current_time, reason):
-        # 充电站位置与功率：优先用 observation 中暴露的字段（与实际仿真一致），
-        # 缺失时回退到第一架无人机的当前位置 / 默认充电功率
-        station_info = observation.get('charging_station', {}) or {}
-        station_pos = tuple(station_info.get('position',
-                                              observation['drone_positions'][0]))
-        charging_power = float(station_info.get('charging_power', 50.0))
+        # 充电站信息：优先用 observation 中的多站列表，缺失时回退到单站格式
+        stations_info = observation.get('charging_stations', None)
+        if not stations_info:
+            # 向后兼容单站格式
+            station_info = observation.get('charging_station', {}) or {}
+            station_pos = tuple(station_info.get('position',
+                                                  observation['drone_positions'][0]))
+            charging_power = float(station_info.get('charging_power', 50.0))
+            stations_info = [{
+                'position': list(station_pos),
+                'charging_power': charging_power,
+            }]
+        else:
+            # 统一转换格式
+            stations_info = [{
+                'position': s['position'],
+                'charging_power': float(s.get('charging_power', 50.0)),
+            } for s in stations_info]
 
         # 电量信息（每机一份）
         battery_obs = observation.get('drone_batteries')
@@ -664,8 +682,7 @@ class PSOScheduler:
                 'home_position': tuple(observation['drone_positions'][i]),
                 'battery_capacity': bcap,
                 'battery': bcur,
-                'charging_station_position': station_pos,
-                'charging_power': charging_power,
+                'charging_stations': stations_info,
             })
 
         tasks_info = [{
