@@ -35,10 +35,8 @@ class EpisodeRunner:
             "t_env",
             "mode",
             "ep_length",
-            "completion_rate",
             "on_time_rate",
             "avg_delay",
-            "avg_delivery_time",
             "order_generate_rate",
             "total_completed",
         ]

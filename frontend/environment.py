@@ -434,16 +434,6 @@ class Environment:
             else:
                 reward += self.reward_priority_3
 
-            # 检查是否超时
-            deadline = task.get_deadline()
-            if deadline is not None and completion_time > deadline:
-                # Note: we already apply per-step overdue penalties for unfinished tasks.
-                # If a task has been marked overdue before completion, avoid double-penalizing
-                # the same lateness again with a one-shot penalty proportional to total overtime.
-                if task.task_id not in self._overdue_task_ids:
-                    overtime = completion_time - deadline
-                    reward += self.penalty_late_rate * float(overtime)
-
         # 对未完成且已超时的任务惩罚：首次大惩罚，持续超时小惩罚
         seen_task_ids = set()
         overdue_penalty = 0.0
