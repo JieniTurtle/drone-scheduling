@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +30,7 @@ class EnvDroneEnv(MultiAgentEnv):
         if episode_limit is None:
             episode_limit = env_cfg.get("episode_max_steps", 1200)
         if max_tasks is None:
-            max_tasks = wx_cfg.get("max_tasks", env_cfg.get("max_unassigned_tasks", 5))
+            max_tasks = env_cfg.get("max_obs_tasks", wx_cfg.get("max_tasks", 5))
         if max_remaining_time is None:
             max_remaining_time = wx_cfg.get("max_remaining_time", 600.0)
         if map_relative_path is None:
@@ -77,8 +76,18 @@ class EnvDroneEnv(MultiAgentEnv):
         cfg_path = self._project_root / "config" / "simulation.json"
         if not cfg_path.exists():
             return {}
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+
+        root_dir_str = str(self._project_root)
+        if root_dir_str not in sys.path:
+            sys.path.insert(0, root_dir_str)
+
+        from config.config_loder import get_shared_config
+
+        shared_cfg = get_shared_config(str(cfg_path))
+        task_gen = shared_cfg.get("task_generation")
+        if isinstance(task_gen, dict):
+            task_gen["mode"] = "realistic"
+        return shared_cfg
 
     def _prepare_frontend_import_paths(self):
         frontend_dir_str = str(self._frontend_dir)
@@ -151,7 +160,15 @@ class EnvDroneEnv(MultiAgentEnv):
 
         if terminated:
             if isinstance(frontend_info, dict):
-                for k in ("completion_rate", "on_time_rate", "avg_delay", "total_completed"):
+                for k in (
+                    "completion_rate",
+                    "on_time_rate",
+                    "avg_delay",
+                    "total_completed",
+                    "avg_delivery_time",
+                    "total_energy_consumed",
+                    "avg_energy_per_task",
+                ):
                     if k in frontend_info:
                         if k == "total_completed":
                             env_info[k] = int(frontend_info[k])
@@ -163,6 +180,9 @@ class EnvDroneEnv(MultiAgentEnv):
                 env_info["on_time_rate"] = float(stats.get("on_time_rate", env_info.get("on_time_rate", 0.0)))
                 env_info["avg_delay"] = float(stats.get("avg_delay", env_info.get("avg_delay", 0.0)))
                 env_info["total_completed"] = int(stats.get("total_completed", env_info.get("total_completed", 0)))
+                env_info["avg_delivery_time"] = float(stats.get("avg_delivery_time", env_info.get("avg_delivery_time", 0.0)))
+                env_info["total_energy_consumed"] = float(stats.get("total_energy_consumed", env_info.get("total_energy_consumed", 0.0)))
+                env_info["avg_energy_per_task"] = float(stats.get("avg_energy_per_task", env_info.get("avg_energy_per_task", 0.0)))
 
         return float(reward), terminated, env_info
 

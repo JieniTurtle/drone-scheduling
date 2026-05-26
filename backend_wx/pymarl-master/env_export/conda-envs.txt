@@ -1,4 +1,0 @@
-# conda environments:
-#
-base                  *  /root/miniconda3
-

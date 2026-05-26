@@ -1,21 +1,21 @@
 {
   "environment": {
-    "episode_max_steps": 30000,
+    "episode_max_steps": 8000,
     "num_drones": 10,
     "print_route_debug": false,
     "allow_multi_task": true,
-    "max_obs_tasks": 50
+    "max_obs_tasks": 10
   },
   "task_generation": {
     "mode": "realistic",
     "same_source_prob": 0.3,
     "constant": {
-      "max_unassigned_tasks": 50,
-      "initial_task_count": 50
+      "max_unassigned_tasks": 5,
+      "initial_task_count": 5
     },
     "realistic": {
-      "total_tasks": 300,
-      "initial_task_count": 20,
+      "total_tasks": 100,
+      "initial_task_count": 10,
       "peak_steps_per_task": 3,
       "off_peak_steps_per_task": 7,
       "peak_probability": 0.85,
