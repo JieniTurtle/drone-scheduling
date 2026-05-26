@@ -14,7 +14,6 @@ class EnvDroneEnv(MultiAgentEnv):
         self,
         episode_limit=None,
         max_tasks=None,
-        max_remaining_time=None,
         frontend_root=None,
         map_relative_path=None,
         seed=None,
@@ -25,23 +24,22 @@ class EnvDroneEnv(MultiAgentEnv):
         self._project_root = self._resolve_project_root(frontend_root)
         shared_cfg = self._load_shared_config()
         env_cfg = shared_cfg.get("environment", {})
-        wx_cfg = shared_cfg.get("backend_wx", {})
+        task_cfg = shared_cfg.get("task", {})
 
         if episode_limit is None:
             episode_limit = env_cfg.get("episode_max_steps", 1200)
         if max_tasks is None:
-            max_tasks = env_cfg.get("max_obs_tasks", wx_cfg.get("max_tasks", 5))
-        if max_remaining_time is None:
-            max_remaining_time = wx_cfg.get("max_remaining_time", 600.0)
+            max_tasks = env_cfg.get("max_obs_tasks", 5)
         if map_relative_path is None:
-            map_relative_path = wx_cfg.get("map_relative_path", "data/map/part_of_yangpu.osm")
+            map_relative_path = env_cfg.get("map_relative_path", "data/map/part_of_yangpu.osm")
 
         self.episode_limit = int(episode_limit)
         self.max_tasks = int(max_tasks)
-        self.max_remaining_time = float(max_remaining_time)
-        self._base_seed = int(seed) if seed is not None else None
+        self._max_remaining_time = float(task_cfg.get("deadline_offset_max", 600.0))
+        if self._max_remaining_time <= 0:
+            self._max_remaining_time = 1.0
+        self._priority_max = float(task_cfg.get("priority_max", 3.0))
         self._episode_seed = None
-        self._rng = np.random.RandomState(seed if seed is not None else 0)
 
         self._frontend_dir = self._project_root / "frontend"
         self._map_path = self._frontend_dir / map_relative_path
@@ -62,6 +60,21 @@ class EnvDroneEnv(MultiAgentEnv):
         self._t = 0
         self._last_obs = None
         self.reset()
+
+    @staticmethod
+    def _is_padded_task(task):
+        if not isinstance(task, dict):
+            return True
+        task_id = task.get("task_id")
+        if isinstance(task_id, str) and task_id.startswith("__pad_"):
+            return True
+        remaining_time = task.get("remaining_time")
+        if remaining_time is None:
+            return False
+        try:
+            return float(remaining_time) < 0
+        except (TypeError, ValueError):
+            return False
 
     def _resolve_project_root(self, frontend_root):
         if frontend_root:
@@ -98,13 +111,19 @@ class EnvDroneEnv(MultiAgentEnv):
             sys.path.insert(0, root_dir_str)
 
     def _create_frontend_env(self):
-        os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-        from environment import Environment
-
         prev_cwd = os.getcwd()
         try:
             # frontend Environment relies on relative paths for local assets.
             os.chdir(str(self._frontend_dir))
+            os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+            try:
+                from environment import Environment
+            except ModuleNotFoundError as exc:
+                message = (
+                    "Failed to import frontend.environment. "
+                    "Ensure frontend directory is on sys.path and current working directory is the frontend root."
+                )
+                raise ModuleNotFoundError(message) from exc
             return Environment(str(self._map_path), visualize=False, episode_max_steps=self.episode_limit)
         finally:
             os.chdir(prev_cwd)
@@ -145,7 +164,13 @@ class EnvDroneEnv(MultiAgentEnv):
             if task_slot >= len(unassigned_tasks):
                 continue
 
-            task_id = unassigned_tasks[task_slot]["task_id"]
+            task_dict = unassigned_tasks[task_slot]
+            if self._is_padded_task(task_dict):
+                continue
+
+            task_id = task_dict.get("task_id")
+            if task_id is None:
+                continue
             assignments[agent_id] = [task_id]
 
         next_obs, reward, frontend_done, frontend_info = self._frontend_env.step(assignments)
@@ -166,6 +191,7 @@ class EnvDroneEnv(MultiAgentEnv):
                     "avg_delay",
                     "total_completed",
                     "avg_delivery_time",
+                    "order_generate_rate",
                     "total_energy_consumed",
                     "avg_energy_per_task",
                 ):
@@ -181,8 +207,15 @@ class EnvDroneEnv(MultiAgentEnv):
                 env_info["avg_delay"] = float(stats.get("avg_delay", env_info.get("avg_delay", 0.0)))
                 env_info["total_completed"] = int(stats.get("total_completed", env_info.get("total_completed", 0)))
                 env_info["avg_delivery_time"] = float(stats.get("avg_delivery_time", env_info.get("avg_delivery_time", 0.0)))
+                if "order_generate_rate" not in env_info:
+                    total_generated = getattr(self._frontend_env, "total_generated_tasks", 0)
+                    if total_generated:
+                        env_info["order_generate_rate"] = float(getattr(self._frontend_env, "current_time", 0)) / float(total_generated)
+                    else:
+                        env_info["order_generate_rate"] = 0.0
                 env_info["total_energy_consumed"] = float(stats.get("total_energy_consumed", env_info.get("total_energy_consumed", 0.0)))
                 env_info["avg_energy_per_task"] = float(stats.get("avg_energy_per_task", env_info.get("avg_energy_per_task", 0.0)))
+                env_info["avg_energy_per_distance"] = float(stats.get("avg_energy_per_distance", env_info.get("avg_energy_per_distance", 0.0)))
 
         return float(reward), terminated, env_info
 
@@ -211,17 +244,20 @@ class EnvDroneEnv(MultiAgentEnv):
         return nx, ny
 
     def _task_vector(self, task):
+        if self._is_padded_task(task):
+            return [0.0] * self._task_feature_dim
         sx, sy = task.get("source", [0.0, 0.0])
         dx, dy = task.get("destination", [0.0, 0.0])
         nsx, nsy = self._norm_coord(sx, sy)
         ndx, ndy = self._norm_coord(dx, dy)
 
-        rem = task.get("remaining_time", self.max_remaining_time)
+        rem = task.get("remaining_time", self._max_remaining_time)
         if np.isinf(rem):
-            rem = self.max_remaining_time
-        rem = float(np.clip(rem / max(self.max_remaining_time, 1.0), 0.0, 1.0))
+            rem = self._max_remaining_time
+        rem = float(np.clip(rem / max(self._max_remaining_time, 1.0), 0.0, 1.0))
 
-        priority = float(task.get("priority", 0.0)) / 3.0
+        priority_max = self._priority_max if self._priority_max > 0 else 1.0
+        priority = float(task.get("priority", 0.0)) / priority_max
         weight = float(task.get("weight", 0.0)) / 10.0
         active = 1.0
         return [nsx, nsy, ndx, ndy, rem, priority, weight, active]
@@ -291,9 +327,10 @@ class EnvDroneEnv(MultiAgentEnv):
         if agent_id >= len(drone_is_free) or not drone_is_free[agent_id]:
             return avail
 
-        num_tasks = min(len(self._last_obs.get("unassigned_tasks", [])), self.max_tasks)
-        for action in range(1, num_tasks + 1):
-            avail[action] = 1
+        tasks = self._last_obs.get("unassigned_tasks", [])
+        for i in range(min(len(tasks), self.max_tasks)):
+            if not self._is_padded_task(tasks[i]):
+                avail[i + 1] = 1
         return avail
 
     def get_total_actions(self):

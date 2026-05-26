@@ -34,9 +34,12 @@ class EpisodeRunner:
             "episode",
             "t_env",
             "mode",
+            "ep_length",
             "completion_rate",
             "on_time_rate",
             "avg_delay",
+            "avg_delivery_time",
+            "order_generate_rate",
             "total_completed",
         ]
         self._ensure_metrics_schema()
@@ -185,8 +188,7 @@ class EpisodeRunner:
         if not isinstance(env_info, dict):
             return
 
-        required_keys = ("completion_rate", "on_time_rate", "avg_delay", "total_completed")
-        if not all(k in env_info for k in required_keys):
+        if "completion_rate" not in env_info:
             return
 
         os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
@@ -203,10 +205,13 @@ class EpisodeRunner:
                 int(self.episode_id),
                 int(self.t_env),
                 mode,
-                float(env_info["completion_rate"]),
-                float(env_info["on_time_rate"]),
-                float(env_info["avg_delay"]),
-                int(env_info["total_completed"]),
+                int(self.t),
+                float(env_info.get("completion_rate", 0.0)),
+                float(env_info.get("on_time_rate", 0.0)),
+                float(env_info.get("avg_delay", 0.0)),
+                float(env_info.get("avg_delivery_time", 0.0)),
+                float(env_info.get("order_generate_rate", 0.0)),
+                int(env_info.get("total_completed", 0)),
             ])
 
     def _ensure_metrics_schema(self):

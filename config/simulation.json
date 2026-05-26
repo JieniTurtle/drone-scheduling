@@ -1,10 +1,17 @@
 {
   "environment": {
-    "episode_max_steps": 8000,
+    "episode_max_steps": 2000,
     "num_drones": 10,
     "print_route_debug": false,
     "allow_multi_task": true,
-    "max_obs_tasks": 10
+    "max_obs_tasks": 10,
+    "reward_step": -0.1,
+    "reward_priority_1": 100.0,
+    "reward_priority_2": 80.0,
+    "reward_priority_3": 50.0,
+    "penalty_late_rate": -0.01,
+    "overdue_initial_penalty": -40.0,
+    "overdue_step_penalty": -0.01
   },
   "task_generation": {
     "mode": "realistic",
@@ -14,12 +21,14 @@
       "initial_task_count": 5
     },
     "realistic": {
-      "total_tasks": 100,
-      "initial_task_count": 10,
-      "peak_steps_per_task": 3,
-      "off_peak_steps_per_task": 7,
+      "total_tasks": 50,
+      "initial_task_count": 3,
+      "peak_steps_per_task": 5,
+      "off_peak_steps_per_task": 9,
       "peak_probability": 0.85,
       "cycle_length": 500,
+      "interval_scale": 2.0,
+      "interval_variance_ratio": 0.2,
       "hotspot": {
         "enabled": true,
         "probability": 0.4,
@@ -65,6 +74,7 @@
   "metrics": {
     "compare_dir": "results/compare",
     "frontend_greedy_file": "frontend_greedy_metrics.csv",
+    "frontend_generation_file": "frontend_generation_metrics.csv",
     "backend_si_file": "backend_si_metrics.csv",
     "backend_wx_file": "backend_wx_metrics.csv"
   }

@@ -57,6 +57,16 @@ class Environment:
         # 跟踪每个无人机之前的空闲状态
         self._prev_free_status = {i: True for i in range(len(self.drones))}
 
+        self.reward_step = float(ENV_CFG.get("reward_step", -0.1))
+        self.reward_priority_1 = float(ENV_CFG.get("reward_priority_1", 100.0))
+        self.reward_priority_2 = float(ENV_CFG.get("reward_priority_2", 80.0))
+        self.reward_priority_3 = float(ENV_CFG.get("reward_priority_3", 50.0))
+        self.penalty_late_rate = float(ENV_CFG.get("penalty_late_rate", -0.01))
+        self.overdue_initial_penalty = float(ENV_CFG.get("overdue_initial_penalty", -10.0))
+        self.overdue_step_penalty = float(ENV_CFG.get("overdue_step_penalty", -0.1))
+        self._overdue_task_ids = set()
+        self.generated_task_times = []
+
         # 统计指标（按回合统计）
         self.total_generated_tasks = 0
         self.total_completed_tasks = 0
@@ -73,6 +83,7 @@ class Environment:
         # 初始生成一批任务
         new_tasks = self.task_generator.generate_initial_tasks(self.current_time)
         self.total_generated_tasks = len(new_tasks)
+        self.generated_task_times = [t.get_generation_time() for t in new_tasks]
         print(f"Generated {len(new_tasks)} tasks:")
         for task in new_tasks:
             print(f"  {task}")
@@ -266,6 +277,8 @@ class Environment:
         new_tasks = self.task_generator.step(self.current_time)
         if new_tasks:
             self.total_generated_tasks += len(new_tasks)
+            self.generated_task_times.extend([t.get_generation_time() for t in new_tasks])
+            self.generated_task_times.extend([t.get_generation_time() for t in new_tasks])
 
         # 记录更新前的电量状态和航点，用于统计耗电量和检测任务完成
         prev_batteries = [drone.current_battery for drone in self.drones]
@@ -337,11 +350,15 @@ class Environment:
         )
         done = bool(done_by_horizon or done_by_exhaustion or (not running))
         stats = self.get_statistics()
+        order_generate_rate = 0.0
+        if self.total_generated_tasks > 0:
+            order_generate_rate = float(self.current_time) / float(self.total_generated_tasks)
         info = {
             "episode_limit": bool(done_by_horizon),
             "completion_rate": float(stats["completion_rate"]),
             "on_time_rate": float(stats["on_time_rate"]),
             "avg_delay": float(stats["avg_delay"]),
+            "order_generate_rate": order_generate_rate,
         }
 
         return self._obs(), self._reward(), done, info
@@ -370,6 +387,8 @@ class Environment:
         self.completed_tasks = []
         self.drone_assignments = {}
         self._prev_free_status = {i: True for i in range(len(self.drones))}
+        self._overdue_task_ids = set()
+        self.generated_task_times = []
 
         self.total_generated_tasks = 0
         self.total_completed_tasks = 0
@@ -383,8 +402,9 @@ class Environment:
         # 重置任务生成器并生成初始任务
         self.task_generator.reset()
         self.task_generator.set_seed(self._episode_seed)
-        self.task_generator.generate_initial_tasks(self.current_time)
+        initial_tasks = self.task_generator.generate_initial_tasks(self.current_time)
         self.unassigned_tasks.extend(self.task_generator.unassigned_tasks)
+        self.generated_task_times = [t.get_generation_time() for t in initial_tasks]
         self.total_generated_tasks = self.task_generator.total_tasks_generated
 
         return self._obs()
@@ -398,9 +418,9 @@ class Environment:
         reward = 0.0
         
         # 每步负奖励
-        reward -= 0.1
+        reward += self.reward_step
         
-        # 计算刚刚完成的任务的奖励
+        # 计算刚刚完成的任务的奖励（送达时给奖励）
         for completed in self.completed_tasks:
             task = completed['task']
             completion_time = completed['completion_time']
@@ -408,17 +428,62 @@ class Environment:
             # 基础完成奖励
             priority = task.get_priority()
             if priority == 1:
-                reward += 100
+                reward += self.reward_priority_1
             elif priority == 2:
-                reward += 80
+                reward += self.reward_priority_2
             else:
-                reward += 50
-            
+                reward += self.reward_priority_3
+
             # 检查是否超时
             deadline = task.get_deadline()
             if deadline is not None and completion_time > deadline:
-                overtime = completion_time - deadline
-                reward = -0.01 * overtime * reward  # 超时惩罚，惩罚程度随超时时间增加
+                # Note: we already apply per-step overdue penalties for unfinished tasks.
+                # If a task has been marked overdue before completion, avoid double-penalizing
+                # the same lateness again with a one-shot penalty proportional to total overtime.
+                if task.task_id not in self._overdue_task_ids:
+                    overtime = completion_time - deadline
+                    reward += self.penalty_late_rate * float(overtime)
+
+        # 对未完成且已超时的任务惩罚：首次大惩罚，持续超时小惩罚
+        seen_task_ids = set()
+        overdue_penalty = 0.0
+        current_time = self.current_time
+
+        for task in self.task_generator.unassigned_tasks:
+            if task.task_id in seen_task_ids:
+                continue
+            seen_task_ids.add(task.task_id)
+            deadline = task.get_deadline()
+            if deadline is None:
+                continue
+            overdue = current_time - deadline
+            if overdue > 0:
+                if task.task_id not in self._overdue_task_ids:
+                    overdue_penalty += self.overdue_initial_penalty
+                    self._overdue_task_ids.add(task.task_id)
+                else:
+                    overdue_penalty += self.overdue_step_penalty
+
+        for assignments in self.drone_assignments.values():
+            if isinstance(assignments, dict):
+                assignments = [assignments]
+            for assignment in assignments:
+                task = assignment.get('task')
+                if task is None or task.task_id in seen_task_ids:
+                    continue
+                seen_task_ids.add(task.task_id)
+                deadline = task.get_deadline()
+                if deadline is None:
+                    continue
+                overdue = current_time - deadline
+                if overdue > 0:
+                    if task.task_id not in self._overdue_task_ids:
+                        overdue_penalty += self.overdue_initial_penalty
+                        self._overdue_task_ids.add(task.task_id)
+                    else:
+                        overdue_penalty += self.overdue_step_penalty
+
+        reward += overdue_penalty
         
         # 清空已处理的完成任务
         self.completed_tasks.clear()

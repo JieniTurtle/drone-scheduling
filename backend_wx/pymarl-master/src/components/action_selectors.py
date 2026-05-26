@@ -67,47 +67,40 @@ class EpsilonGreedyActionSelector():
         return picked_actions
 
     def _select_unique_task_actions(self, masked_q_values, avail_actions):
-        """Choose joint actions with max summed Q while avoiding duplicate non-NoOp tasks."""
+        """Greedy matching to avoid duplicate non-NoOp tasks (fast for 10 agents)."""
         bs, n_agents, _ = masked_q_values.shape
         noop_action = int(getattr(self.args, "noop_action", 0))
         out = th.zeros((bs, n_agents), dtype=th.long, device=masked_q_values.device)
 
         for b in range(bs):
+            picked = [noop_action for _ in range(n_agents)]
+            used_tasks = set()
+            used_agents = set()
+
+            # Build candidate (q, agent, action) list for non-NoOp actions only.
             candidates = []
             for agent_idx in range(n_agents):
-                valid = th.nonzero(avail_actions[b, agent_idx] > 0, as_tuple=False).squeeze(-1)
+                valid = th.nonzero(avail_actions[b, agent_idx] > 0, as_tuple=False).view(-1)
                 if valid.numel() == 0:
-                    valid = th.tensor([noop_action], dtype=th.long, device=masked_q_values.device)
+                    continue
                 qvals = masked_q_values[b, agent_idx, valid]
-                order = th.argsort(qvals, descending=True)
-                candidates.append(valid[order].tolist())
-
-            best_score = -float("inf")
-            best_actions = [noop_action for _ in range(n_agents)]
-            current = [noop_action for _ in range(n_agents)]
-
-            def dfs(agent_idx, used_tasks, score):
-                nonlocal best_score, best_actions
-                if agent_idx == n_agents:
-                    if score > best_score:
-                        best_score = score
-                        best_actions = current.copy()
-                    return
-
-                for action in candidates[agent_idx]:
-                    if action != noop_action and action in used_tasks:
+                for j in range(valid.numel()):
+                    action = int(valid[j].item())
+                    if action == noop_action:
                         continue
+                    q = float(qvals[j].item())
+                    candidates.append((q, agent_idx, action))
 
-                    current[agent_idx] = action
-                    next_used = used_tasks
-                    if action != noop_action:
-                        next_used = used_tasks | {action}
+            # Greedy maximum weight matching over (agent, action) pairs.
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            for _, agent_idx, action in candidates:
+                if agent_idx in used_agents or action in used_tasks:
+                    continue
+                picked[agent_idx] = action
+                used_agents.add(agent_idx)
+                used_tasks.add(action)
 
-                    q = float(masked_q_values[b, agent_idx, action].item())
-                    dfs(agent_idx + 1, next_used, score + q)
-
-            dfs(0, set(), 0.0)
-            out[b] = th.tensor(best_actions, dtype=th.long, device=masked_q_values.device)
+            out[b] = th.tensor(picked, dtype=th.long, device=masked_q_values.device)
 
         return out
 

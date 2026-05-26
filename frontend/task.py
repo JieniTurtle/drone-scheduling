@@ -195,6 +195,8 @@ class RealisticModeGenerator:
         self._offpeak_steps = int(REALISTIC_CFG.get("off_peak_steps_per_task", 12))
         self._peak_prob = float(REALISTIC_CFG.get("peak_probability", 0.3))
         self._cycle_length = int(REALISTIC_CFG.get("cycle_length", 100))
+        self._interval_scale = float(REALISTIC_CFG.get("interval_scale", 1.0))
+        self._interval_variance_ratio = float(REALISTIC_CFG.get("interval_variance_ratio", 0.5))
         self._next_task_step = 0
         self._tasks_generated = 0
 
@@ -279,7 +281,8 @@ class RealisticModeGenerator:
         else:
             interval = self._offpeak_steps
 
-        variance = int(interval * 0.5)
+        interval = max(1, int(round(interval * self._interval_scale)))
+        variance = int(interval * max(0.0, self._interval_variance_ratio))
         interval = max(1, interval + random.randint(-variance, variance))
         self._next_task_step = current_time + interval
 
