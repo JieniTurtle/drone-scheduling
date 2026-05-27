@@ -11,7 +11,7 @@ sys.path.append(str(PROJECT_ROOT))
 
 from environment import Environment
 from backend_si.pso_scheduler import PSOScheduler
-from scheduler import greedy_action_from_observation
+from greedy.scheduler import greedy_action_from_observation
 
 
 def _get_metrics_output(policy):
