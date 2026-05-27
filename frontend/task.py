@@ -206,6 +206,11 @@ class RealisticModeGenerator:
         self._hotspot_prob = float(hotspot_cfg.get("probability", 0.7))
         self._hotspot_radius = float(hotspot_cfg.get("radius", 200))
         self._hotspot_centers = hotspot_cfg.get("centers", [])
+        # 热点内部策略可配置：起点在热点 / 起终都在热点 / 终点在热点
+        strategy_cfg = hotspot_cfg.get("strategy", {})
+        self._hotspot_p_source = float(strategy_cfg.get("p_source_hotspot", 0.7))
+        self._hotspot_p_both = float(strategy_cfg.get("p_both_hotspot", 0.2))
+        self._hotspot_p_dest = float(strategy_cfg.get("p_dest_hotspot", 0.1))
 
     @property
     def initial_task_count(self):
@@ -521,13 +526,24 @@ class TaskGenerator:
         4. 10%概率：起点在普通区域，终点在热点区域
         """
         gen = self._realistic_gen
-        strategy = random.random()
+        r = random.random()
+        # 允许配置概率和不等于1时进行归一化
+        p_source = gen._hotspot_p_source
+        p_both = gen._hotspot_p_both
+        p_dest = gen._hotspot_p_dest
+        total_p = p_source + p_both + p_dest
+        if total_p <= 0:
+            p_source, p_both, p_dest = 0.7, 0.2, 0.1
+            total_p = 1.0
+        p_source /= total_p
+        p_both /= total_p
+        # p_dest implied
 
-        if strategy < 0.7:
+        if r < p_source:
             # 热点 -> 普通
             source = gen.generate_hotspot_position()
             destination = random.choice(self.destinations)
-        elif strategy < 0.9:
+        elif r < (p_source + p_both):
             # 热点 -> 热点
             source = gen.generate_hotspot_position()
             destination = gen.generate_hotspot_position()

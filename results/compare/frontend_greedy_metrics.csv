@@ -1,2 +1,2 @@
-source,episode,completion_rate,on_time_rate,avg_delay
-
+source,episode,episode_step,completion_rate,on_time_rate,avg_delay,avg_wait_time_to_load,avg_delivery_time,avg_generation_to_completion_time,avg_generation_time,total_completed,total_generated,avg_steps_per_order,total_energy_consumed,max_delivery_time
+frontend_greedy,1,50,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,3,0.0,1500.0,0.0

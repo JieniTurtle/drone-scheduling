@@ -76,6 +76,31 @@ def _average_metrics(rows, columns):
     return metrics
 
 
+def _ordered_metric_items(metrics):
+    metric_order = [
+        "episode_step",
+        "completion_rate",
+        "on_time_rate",
+        "avg_delay",
+        "avg_wait_time_to_load",
+        "avg_delivery_time",
+        "avg_generation_to_completion_time",
+        "avg_generation_time",
+        "total_completed",
+        "total_generated",
+        "avg_steps_per_order",
+        "total_energy_consumed",
+        "max_delivery_time",
+    ]
+    ordered = []
+    for key in metric_order:
+        if key in metrics:
+            ordered.append((key, metrics[key]))
+    for key in sorted(k for k in metrics if k not in metric_order):
+        ordered.append((key, metrics[key]))
+    return ordered
+
+
 def main():
     pymarl_root = Path(__file__).resolve().parents[1]
     workspace_root = Path(__file__).resolve().parents[3]
@@ -105,7 +130,7 @@ def main():
     label_template = "{alg}_unique_{unique}_test{test_nepisode}"
 
     results = []
-    all_metric_keys = set()
+    all_metric_keys = []
 
     for alg in algs:
         for unique in unique_flags:
@@ -150,7 +175,9 @@ def main():
             rows, columns = _load_metrics_rows(metrics_csv)
             rows = _filter_test_rows(rows)
             metric_means = _average_metrics(rows, columns)
-            all_metric_keys.update(metric_means.keys())
+            for key, _ in _ordered_metric_items(metric_means):
+                if key not in all_metric_keys:
+                    all_metric_keys.append(key)
 
             results.append({
                 "alg": alg,
@@ -162,11 +189,11 @@ def main():
                 "save_model": int(save_model),
                 "label": label,
                 "sacred_run_id": sacred_run_id,
-                **{f"avg_{k}": v for k, v in metric_means.items()},
+                **metric_means,
             })
 
     compare_csv.parent.mkdir(parents=True, exist_ok=True)
-    metric_columns = [f"avg_{k}" for k in sorted(all_metric_keys)]
+    metric_columns = all_metric_keys
     base_columns = [
         "alg",
         "unique_task_assignment",

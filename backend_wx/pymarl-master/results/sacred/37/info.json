@@ -1,0 +1,130 @@
+{
+  "epsilon": [
+    0.0
+  ],
+  "epsilon_T": [
+    102000
+  ],
+  "test_avg_delay_mean": [
+    0.0
+  ],
+  "test_avg_delay_mean_T": [
+    102000
+  ],
+  "test_avg_delivery_time_mean": [
+    126.3
+  ],
+  "test_avg_delivery_time_mean_T": [
+    102000
+  ],
+  "test_avg_energy_per_distance_mean": [
+    0.0
+  ],
+  "test_avg_energy_per_distance_mean_T": [
+    102000
+  ],
+  "test_avg_energy_per_task_mean": [
+    1252.2437200741356
+  ],
+  "test_avg_energy_per_task_mean_T": [
+    102000
+  ],
+  "test_avg_generation_time_mean": [
+    50.1578947368421
+  ],
+  "test_avg_generation_time_mean_T": [
+    102000
+  ],
+  "test_avg_generation_to_completion_time_mean": [
+    131.9
+  ],
+  "test_avg_generation_to_completion_time_mean_T": [
+    102000
+  ],
+  "test_avg_steps_per_order_mean": [
+    126.3
+  ],
+  "test_avg_steps_per_order_mean_T": [
+    102000
+  ],
+  "test_avg_wait_time_to_load_mean": [
+    5.6
+  ],
+  "test_avg_wait_time_to_load_mean_T": [
+    102000
+  ],
+  "test_completion_rate_mean": [
+    1.0
+  ],
+  "test_completion_rate_mean_T": [
+    102000
+  ],
+  "test_ep_length_mean": [
+    1097.0
+  ],
+  "test_ep_length_mean_T": [
+    102000
+  ],
+  "test_episode_limit_mean": [
+    0.0
+  ],
+  "test_episode_limit_mean_T": [
+    102000
+  ],
+  "test_episode_seed": [
+    101.0,
+    102.0
+  ],
+  "test_episode_seed_T": [
+    102000,
+    102000
+  ],
+  "test_max_delivery_time_mean": [
+    208.0
+  ],
+  "test_max_delivery_time_mean_T": [
+    102000
+  ],
+  "test_noop_fastpath_steps_mean": [
+    1077.0
+  ],
+  "test_noop_fastpath_steps_mean_T": [
+    102000
+  ],
+  "test_on_time_rate_mean": [
+    1.0
+  ],
+  "test_on_time_rate_mean_T": [
+    102000
+  ],
+  "test_return_mean": [
+    1650.3000000000338
+  ],
+  "test_return_mean_T": [
+    102000
+  ],
+  "test_return_std": [
+    0.0
+  ],
+  "test_return_std_T": [
+    102000
+  ],
+  "test_total_completed_mean": [
+    20.0
+  ],
+  "test_total_completed_mean_T": [
+    102000
+  ],
+  "test_total_energy_consumed_mean": [
+    25044.874401482713
+  ],
+  "test_total_energy_consumed_mean_T": [
+    102000
+  ],
+  "test_total_generated_mean": [
+    20.0
+  ],
+  "test_total_generated_mean_T": [
+    102000
+  ]
+}

@@ -189,14 +189,21 @@ class EnvDroneEnv(MultiAgentEnv):
                     "completion_rate",
                     "on_time_rate",
                     "avg_delay",
-                    "total_completed",
+                    "avg_wait_time_to_load",
                     "avg_delivery_time",
-                    "order_generate_rate",
+                    "avg_generation_to_completion_time",
+                    "avg_generation_time",
+                    "total_completed",
+                    "total_generated",
+                    "avg_steps_per_order",
                     "total_energy_consumed",
                     "avg_energy_per_task",
+                    "max_delivery_time",
                 ):
                     if k in frontend_info:
                         if k == "total_completed":
+                            env_info[k] = int(frontend_info[k])
+                        elif k == "total_generated":
                             env_info[k] = int(frontend_info[k])
                         else:
                             env_info[k] = float(frontend_info[k])
@@ -206,23 +213,26 @@ class EnvDroneEnv(MultiAgentEnv):
                 env_info["on_time_rate"] = float(stats.get("on_time_rate", env_info.get("on_time_rate", 0.0)))
                 env_info["avg_delay"] = float(stats.get("avg_delay", env_info.get("avg_delay", 0.0)))
                 env_info["total_completed"] = int(stats.get("total_completed", env_info.get("total_completed", 0)))
-                env_info["avg_delivery_time"] = float(stats.get("avg_delivery_time", env_info.get("avg_delivery_time", 0.0)))
-                if "order_generate_rate" not in env_info:
-                    total_generated = getattr(self._frontend_env, "total_generated_tasks", 0)
-                    if total_generated:
-                        env_info["order_generate_rate"] = float(getattr(self._frontend_env, "current_time", 0)) / float(total_generated)
-                    else:
-                        env_info["order_generate_rate"] = 0.0
+                env_info["total_generated"] = int(stats.get("total_generated", env_info.get("total_generated", 0)))
+                env_info["avg_wait_time_to_load"] = float(
+                    stats.get("avg_wait_time_to_load", env_info.get("avg_wait_time_to_load", 0.0))
+                )
+                env_info["avg_delivery_time"] = float(
+                    stats.get("avg_delivery_time", env_info.get("avg_delivery_time", 0.0))
+                )
+                env_info["avg_generation_to_completion_time"] = float(
+                    stats.get("avg_generation_to_completion_time", env_info.get("avg_generation_to_completion_time", 0.0))
+                )
+                env_info["avg_generation_time"] = float(
+                    stats.get("avg_generation_time", env_info.get("avg_generation_time", 0.0))
+                )
+                env_info["avg_steps_per_order"] = float(
+                    stats.get("avg_steps_per_order", env_info.get("avg_steps_per_order", 0.0))
+                )
                 env_info["total_energy_consumed"] = float(stats.get("total_energy_consumed", env_info.get("total_energy_consumed", 0.0)))
                 env_info["avg_energy_per_task"] = float(stats.get("avg_energy_per_task", env_info.get("avg_energy_per_task", 0.0)))
                 env_info["avg_energy_per_distance"] = float(stats.get("avg_energy_per_distance", env_info.get("avg_energy_per_distance", 0.0)))
-                gen_times = getattr(self._frontend_env, "generated_task_times", [])
-                gen_times = [float(t) for t in gen_times if t is not None]
-                if len(gen_times) >= 2:
-                    diffs = [b - a for a, b in zip(gen_times, gen_times[1:]) if b >= a]
-                    env_info["avg_generation_time"] = float(sum(diffs) / len(diffs)) if diffs else 0.0
-                else:
-                    env_info["avg_generation_time"] = 0.0
+                env_info["max_delivery_time"] = float(stats.get("max_delivery_time", env_info.get("max_delivery_time", 0.0)))
 
         return float(reward), terminated, env_info
 

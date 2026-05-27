@@ -40,45 +40,59 @@ def run_one_episode(osm_path, episode_steps):
         obs, _, done, _ = env.step(action)
 
     stats = env.get_statistics()
-    total_generated = int(getattr(env, "total_generated_tasks", 0))
     result = {
+        "episode_step": int(env.current_time),
         "completion_rate": float(stats.get("completion_rate", 0.0)),
         "on_time_rate": float(stats.get("on_time_rate", 0.0)),
         "avg_delay": float(stats.get("avg_delay", 0.0)),
+        "avg_wait_time_to_load": float(stats.get("avg_wait_time_to_load", 0.0)),
         "avg_delivery_time": float(stats.get("avg_delivery_time", 0.0)),
+        "avg_generation_to_completion_time": float(stats.get("avg_generation_to_completion_time", 0.0)),
+        "avg_generation_time": float(stats.get("avg_generation_time", 0.0)),
+        "avg_steps_per_order": float(stats.get("avg_steps_per_order", 0.0)),
         "total_completed": int(stats.get("total_completed", 0)),
-        "total_generated": total_generated,
-        "episode_steps": int(env.current_time),
+        "total_generated": int(stats.get("total_generated", getattr(env, "total_generated_tasks", 0))),
+        "total_energy_consumed": float(stats.get("total_energy_consumed", 0.0)),
+        "max_delivery_time": float(stats.get("max_delivery_time", 0.0)),
     }
-    if total_generated > 0:
-        result["order_generate_rate"] = result["episode_steps"] / total_generated
-    else:
-        result["order_generate_rate"] = 0.0
     return result
 
 
 def _write_csv(output_path, episode, stats):
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    need_header = not output_path.exists()
-    with open(output_path, "a", newline="", encoding="utf-8") as f:
+    header = [
+        "source", "episode", "episode_step", "completion_rate", "on_time_rate",
+        "avg_delay", "avg_wait_time_to_load", "avg_delivery_time",
+        "avg_generation_to_completion_time", "avg_generation_time",
+        "total_completed", "total_generated", "avg_steps_per_order",
+        "total_energy_consumed", "max_delivery_time",
+    ]
+    existing_header = None
+    if output_path.exists():
+        with open(output_path, "r", encoding="utf-8") as existing:
+            existing_header = existing.readline().strip()
+    need_header = existing_header != ",".join(header)
+    write_mode = "w" if need_header else "a"
+    with open(output_path, write_mode, newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         if need_header:
-            writer.writerow([
-                "source", "episode", "completion_rate", "on_time_rate",
-                "avg_delay", "avg_delivery_time", "total_completed",
-                "total_generated", "order_generate_rate", "episode_steps",
-            ])
+            writer.writerow(header)
         writer.writerow([
             "frontend_greedy",
             int(episode),
+            int(stats["episode_step"]),
             float(stats["completion_rate"]),
             float(stats["on_time_rate"]),
             float(stats["avg_delay"]),
+            float(stats["avg_wait_time_to_load"]),
             float(stats["avg_delivery_time"]),
+            float(stats["avg_generation_to_completion_time"]),
+            float(stats["avg_generation_time"]),
             int(stats["total_completed"]),
             int(stats["total_generated"]),
-            float(stats["order_generate_rate"]),
-            int(stats["episode_steps"]),
+            float(stats["avg_steps_per_order"]),
+            float(stats["total_energy_consumed"]),
+            float(stats["max_delivery_time"]),
         ])
 
 
@@ -104,26 +118,32 @@ def main():
             f"completion={stats['completion_rate']:.4f}, "
             f"on_time={stats['on_time_rate']:.4f}, "
             f"avg_delay={stats['avg_delay']:.4f}, "
+            f"avg_wait={stats['avg_wait_time_to_load']:.4f}, "
             f"avg_delivery={stats['avg_delivery_time']:.4f}, "
+            f"avg_gen_to_done={stats['avg_generation_to_completion_time']:.4f}, "
             f"completed={stats['total_completed']}/{stats['total_generated']}, "
-            f"generate_rate={stats['order_generate_rate']:.4f}, "
-            f"steps={stats['episode_steps']}"
+            f"avg_gen_time={stats['avg_generation_time']:.4f}, "
+            f"steps={stats['episode_step']}"
         )
 
     n = max(len(all_stats), 1)
     mean_completion = sum(s["completion_rate"] for s in all_stats) / n
     mean_on_time = sum(s["on_time_rate"] for s in all_stats) / n
     mean_delay = sum(s["avg_delay"] for s in all_stats) / n
+    mean_wait = sum(s["avg_wait_time_to_load"] for s in all_stats) / n
     mean_delivery = sum(s["avg_delivery_time"] for s in all_stats) / n
-    mean_generate_rate = sum(s["order_generate_rate"] for s in all_stats) / n
+    mean_gen_to_done = sum(s["avg_generation_to_completion_time"] for s in all_stats) / n
+    mean_avg_gen_time = sum(s["avg_generation_time"] for s in all_stats) / n
 
     print("=" * 60)
     print("Mean Metrics")
     print(f"completion_rate:       {mean_completion:.4f}")
     print(f"on_time_rate:          {mean_on_time:.4f}")
     print(f"avg_delay:             {mean_delay:.4f}")
+    print(f"avg_wait_time_to_load: {mean_wait:.4f}")
     print(f"avg_delivery_time:     {mean_delivery:.4f}")
-    print(f"order_generate_rate:   {mean_generate_rate:.4f}")
+    print(f"avg_gen_to_done:       {mean_gen_to_done:.4f}")
+    print(f"avg_generation_time:   {mean_avg_gen_time:.4f}")
     if args.csv:
         print(f"csv_file:              {CSV_OUTPUT}")
     print("=" * 60)

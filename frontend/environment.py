@@ -72,7 +72,10 @@ class Environment:
         self.total_completed_tasks = 0
         self.total_on_time_tasks = 0
         self.total_delay = 0.0
+        self.total_wait_time = 0.0
         self.total_delivery_time = 0.0
+        self.total_generation_to_completion_time = 0.0
+        self.max_delivery_time = 0.0
         
         # 耗电量统计
         self.total_energy_consumed = 0.0  # 总耗电量 (Wh)
@@ -124,7 +127,13 @@ class Environment:
         completed_task = assignment['task']
         start_time = assignment['start_time']
         completion_time = self.current_time
+        generation_time = completed_task.get_generation_time()
+        if generation_time is None:
+            generation_time = start_time
+
+        wait_time = max(0, start_time - generation_time)
         delivery_time = completion_time - start_time
+        generation_to_completion_time = max(0, completion_time - generation_time)
 
         deadline = completed_task.get_deadline()
         if deadline is not None:
@@ -135,14 +144,21 @@ class Environment:
         is_on_time = delay <= 0
         self.total_completed_tasks += 1
         self.total_delay += float(delay)
+        self.total_wait_time += float(wait_time)
         self.total_delivery_time += float(delivery_time)
+        self.total_generation_to_completion_time += float(generation_to_completion_time)
+        self.max_delivery_time = max(self.max_delivery_time, float(delivery_time))
         if is_on_time:
             self.total_on_time_tasks += 1
 
         self.completed_tasks.append({
             'task': completed_task,
+            'generation_time': generation_time,
+            'start_time': start_time,
             'completion_time': completion_time,
+            'wait_time': wait_time,
             'delivery_time': delivery_time,
+            'generation_to_completion_time': generation_to_completion_time,
             'delay': delay
         })
 
@@ -161,13 +177,31 @@ class Environment:
         if self.total_generated_tasks > 0:
             completion_rate = self.total_completed_tasks / self.total_generated_tasks
 
+        avg_generation_time = 0.0
+        if len(self.generated_task_times) >= 2:
+            diffs = [
+                b - a
+                for a, b in zip(self.generated_task_times, self.generated_task_times[1:])
+                if b >= a
+            ]
+            if diffs:
+                avg_generation_time = sum(diffs) / len(diffs)
+
         if self.total_completed_tasks == 0:
             return {
                 'completion_rate': completion_rate,
                 'total_completed': 0,
+                'total_generated': self.total_generated_tasks,
                 'on_time_rate': 0.0,
                 'avg_delay': 0.0,
+                'avg_wait_time_to_load': 0.0,
                 'avg_delivery_time': 0.0,
+                'avg_generation_to_completion_time': 0.0,
+                'avg_steps_per_order': 0.0,
+                'avg_generation_time': avg_generation_time,
+                'max_delivery_time': 0.0,
+                'total_wait_time': self.total_wait_time,
+                'total_generation_to_completion_time': self.total_generation_to_completion_time,
                 'total_energy_consumed': self.total_energy_consumed,
                 'avg_energy_per_task': 0.0,
                 'avg_energy_per_distance': 0.0,
@@ -175,12 +209,24 @@ class Environment:
         
         avg_energy_per_task = self.total_energy_consumed / self.total_completed_tasks
         
+        avg_steps_per_order = self.total_delivery_time / self.total_completed_tasks
+        avg_wait_time_to_load = self.total_wait_time / self.total_completed_tasks
+        avg_generation_to_completion_time = self.total_generation_to_completion_time / self.total_completed_tasks
+
         return {
             'completion_rate': completion_rate,
             'total_completed': self.total_completed_tasks,
+            'total_generated': self.total_generated_tasks,
             'on_time_rate': self.total_on_time_tasks / self.total_completed_tasks,
             'avg_delay': self.total_delay / self.total_completed_tasks,
+            'avg_wait_time_to_load': avg_wait_time_to_load,
             'avg_delivery_time': self.total_delivery_time / self.total_completed_tasks,
+            'avg_generation_to_completion_time': avg_generation_to_completion_time,
+            'avg_steps_per_order': avg_steps_per_order,
+            'avg_generation_time': avg_generation_time,
+            'max_delivery_time': self.max_delivery_time,
+            'total_wait_time': self.total_wait_time,
+            'total_generation_to_completion_time': self.total_generation_to_completion_time,
             'total_energy_consumed': self.total_energy_consumed,
             'avg_energy_per_task': avg_energy_per_task,
         }
@@ -195,7 +241,10 @@ class Environment:
         print(f"  完成任务数: {stats['total_completed']}")
         print(f"  准时率: {stats['on_time_rate']:.2%}")
         print(f"  平均延迟: {stats['avg_delay']:.2f} 时间单位")
+        print(f"  平均装载等待时间: {stats['avg_wait_time_to_load']:.2f} 时间单位")
         print(f"  平均配送时长: {stats['avg_delivery_time']:.2f} 时间单位")
+        print(f"  平均生成到完成时长: {stats['avg_generation_to_completion_time']:.2f} 时间单位")
+        print(f"  平均生成间隔: {stats['avg_generation_time']:.2f} 时间单位")
         print(f"  总耗电量: {stats['total_energy_consumed']:.2f} Wh")
         if stats['total_completed'] > 0:
             print(f"  平均每任务耗电: {stats['avg_energy_per_task']:.2f} Wh")
@@ -278,7 +327,6 @@ class Environment:
         if new_tasks:
             self.total_generated_tasks += len(new_tasks)
             self.generated_task_times.extend([t.get_generation_time() for t in new_tasks])
-            self.generated_task_times.extend([t.get_generation_time() for t in new_tasks])
 
         # 记录更新前的电量状态和航点，用于统计耗电量和检测任务完成
         prev_batteries = [drone.current_battery for drone in self.drones]
@@ -350,15 +398,21 @@ class Environment:
         )
         done = bool(done_by_horizon or done_by_exhaustion or (not running))
         stats = self.get_statistics()
-        order_generate_rate = 0.0
-        if self.total_generated_tasks > 0:
-            order_generate_rate = float(self.current_time) / float(self.total_generated_tasks)
         info = {
             "episode_limit": bool(done_by_horizon),
+            "episode_step": int(self.current_time),
             "completion_rate": float(stats["completion_rate"]),
+            "total_completed": int(stats.get("total_completed", 0)),
+            "total_generated": int(stats.get("total_generated", self.total_generated_tasks)),
             "on_time_rate": float(stats["on_time_rate"]),
             "avg_delay": float(stats["avg_delay"]),
-            "order_generate_rate": order_generate_rate,
+            "avg_wait_time_to_load": float(stats.get("avg_wait_time_to_load", 0.0)),
+            "avg_delivery_time": float(stats.get("avg_delivery_time", 0.0)),
+            "avg_generation_to_completion_time": float(stats.get("avg_generation_to_completion_time", 0.0)),
+            "avg_generation_time": float(stats.get("avg_generation_time", 0.0)),
+            "avg_steps_per_order": float(stats.get("avg_steps_per_order", 0.0)),
+            "max_delivery_time": float(stats.get("max_delivery_time", 0.0)),
+            "total_energy_consumed": float(stats.get("total_energy_consumed", 0.0)),
         }
 
         return self._obs(), self._reward(), done, info
@@ -394,7 +448,10 @@ class Environment:
         self.total_completed_tasks = 0
         self.total_on_time_tasks = 0
         self.total_delay = 0.0
+        self.total_wait_time = 0.0
         self.total_delivery_time = 0.0
+        self.total_generation_to_completion_time = 0.0
+        self.max_delivery_time = 0.0
 
         # 重置耗电量统计
         self.total_energy_consumed = 0.0

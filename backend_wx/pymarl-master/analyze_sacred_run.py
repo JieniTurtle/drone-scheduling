@@ -53,6 +53,24 @@ def _extract_xy(rows, x_key, y_key):
     return xs, ys
 
 
+def _choose_x_key(rows):
+    """选择适合当前 CSV 的横轴字段。"""
+    if not rows:
+        return "t_env"
+
+    candidates = ["episode", "t_env"]
+    for key in candidates:
+        values = []
+        for r in rows:
+            v = _safe_float(r.get(key), default=None)
+            if v is not None:
+                values.append(v)
+        if len(values) >= 2 and len(set(values)) > 1:
+            return key
+
+    return "t_env"
+
+
 def _find_best_test_point_from_info(info_data):
     """Find best test point from info.json curves.
 
@@ -128,20 +146,34 @@ def _plot_metrics(rows, out_dir):
         ) from e
 
     train_rows, test_rows = _split_mode_rows(rows)
+    x_key = _choose_x_key(rows)
 
-    metrics = ["completion_rate", "on_time_rate", "avg_delay", "total_completed"]
+    metrics = [
+        "completion_rate",
+        "on_time_rate",
+        "avg_delay",
+        "avg_wait_time_to_load",
+        "avg_delivery_time",
+        "avg_generation_to_completion_time",
+        "avg_generation_time",
+        "total_completed",
+        "total_generated",
+        "avg_steps_per_order",
+        "total_energy_consumed",
+        "max_delivery_time",
+    ]
     for metric in metrics:
         fig, ax = plt.subplots(figsize=(9, 5))
-        tx, ty = _extract_xy(train_rows, "t_env", metric)
-        vx, vy = _extract_xy(test_rows, "t_env", metric)
+        tx, ty = _extract_xy(train_rows, x_key, metric)
+        vx, vy = _extract_xy(test_rows, x_key, metric)
 
         if ty:
             ax.plot(tx, ty, marker="o", linewidth=1.6, label="train")
         if vy:
             ax.plot(vx, vy, marker="s", linewidth=1.8, label="test")
 
-        ax.set_title(f"backend_wx {metric} vs t_env")
-        ax.set_xlabel("t_env")
+        ax.set_title(f"backend_wx {metric} vs {x_key}")
+        ax.set_xlabel(x_key)
         ax.set_ylabel(metric)
         ax.grid(alpha=0.25)
         if ty or vy:
@@ -198,13 +230,27 @@ def _plot_info_curves(info_data, out_dir):
 def _write_summary(run_dir, rows, info_data, out_dir):
     train_rows, test_rows = _split_mode_rows(rows)
     best_test_from_info = _find_best_test_point_from_info(info_data)
+    x_key = _choose_x_key(rows)
+
+    best_test_row = None
+    if test_rows:
+        def row_score(r):
+            completion = _safe_float(r.get("completion_rate"), default=-1.0)
+            on_time = _safe_float(r.get("on_time_rate"), default=-1.0)
+            delay = _safe_float(r.get("avg_delay"), default=1e18)
+            energy = _safe_float(r.get("total_energy_consumed"), default=1e18)
+            return (completion, on_time, -delay, -energy)
+
+        best_test_row = max(test_rows, key=row_score)
 
     summary = {
         "run_dir": str(run_dir),
         "metrics_rows": len(rows),
         "train_rows": len(train_rows),
         "test_rows": len(test_rows),
+        "x_key": x_key,
         "best_test_from_info": best_test_from_info,
+        "best_test_row": best_test_row,
         "info_keys": sorted(list(info_data.keys()))[:200],
     }
 
@@ -221,6 +267,7 @@ def analyze(run_dir):
 
     rows = _load_metrics_csv(csv_path)
     info_data = _load_info_json(info_path)
+    x_key = _choose_x_key(rows)
 
     if rows:
         _plot_metrics(rows, out_dir)
@@ -235,6 +282,7 @@ def analyze(run_dir):
     print(f"Run Dir: {run_dir}")
     print(f"Metrics CSV exists: {csv_path.exists()}, rows: {len(rows)}")
     print(f"Info JSON exists: {info_path.exists()}, keys: {len(info_data.keys()) if isinstance(info_data, dict) else 0}")
+    print(f"CSV x-axis key: {x_key}")
     if best_info:
         print(
             "Best test point from info.json: "

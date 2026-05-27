@@ -1,10 +1,10 @@
 {
   "environment": {
-    "episode_max_steps": 2000,
+    "episode_max_steps": 3000,
     "num_drones": 10,
     "print_route_debug": false,
     "allow_multi_task": true,
-    "max_obs_tasks": 10,
+    "max_obs_tasks": 3,
     "reward_step": -0.1,
     "reward_priority_1": 100.0,
     "reward_priority_2": 80.0,
@@ -21,18 +21,23 @@
       "initial_task_count": 5
     },
     "realistic": {
-      "total_tasks": 50,
+      "total_tasks": 60,
       "initial_task_count": 3,
       "peak_steps_per_task": 5,
       "off_peak_steps_per_task": 9,
       "peak_probability": 0.85,
       "cycle_length": 500,
-      "interval_scale": 2.0,
+      "interval_scale": 3.5,
       "interval_variance_ratio": 0.2,
       "hotspot": {
         "enabled": true,
         "probability": 0.4,
-        "radius": 100,
+        "strategy": {
+          "p_source_hotspot": 0.4,
+          "p_both_hotspot": 0.2,
+          "p_dest_hotspot": 0.4
+        },
+        "radius": 50,
         "centers": [
           [
             359190.428233,
