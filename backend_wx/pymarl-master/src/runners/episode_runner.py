@@ -39,6 +39,8 @@ class EpisodeRunner:
             "avg_delay",
             "order_generate_rate",
             "total_completed",
+            "total_energy_consumed",
+            "avg_generation_time",
         ]
         self._ensure_metrics_schema()
 
@@ -204,12 +206,12 @@ class EpisodeRunner:
                 int(self.t_env),
                 mode,
                 int(self.t),
-                float(env_info.get("completion_rate", 0.0)),
                 float(env_info.get("on_time_rate", 0.0)),
                 float(env_info.get("avg_delay", 0.0)),
-                float(env_info.get("avg_delivery_time", 0.0)),
                 float(env_info.get("order_generate_rate", 0.0)),
                 int(env_info.get("total_completed", 0)),
+                float(env_info.get("total_energy_consumed", 0.0)),
+                float(env_info.get("avg_generation_time", 0.0)),
             ])
 
     def _ensure_metrics_schema(self):

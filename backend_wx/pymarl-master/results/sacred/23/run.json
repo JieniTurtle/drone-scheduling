@@ -13,17 +13,17 @@
     "name": "pymarl",
     "repositories": [
       {
-        "commit": "7fdefcb556344fd24fbd3328d872b3d8f94cd0a5",
+        "commit": "3f9db73d689b47c2d1572377ba702e911a3d7109",
         "dirty": true,
         "url": "https://github.com/JieniTurtle/drone-scheduling"
       },
       {
-        "commit": "7fdefcb556344fd24fbd3328d872b3d8f94cd0a5",
+        "commit": "3f9db73d689b47c2d1572377ba702e911a3d7109",
         "dirty": true,
         "url": "https://github.com/JieniTurtle/drone-scheduling"
       },
       {
-        "commit": "7fdefcb556344fd24fbd3328d872b3d8f94cd0a5",
+        "commit": "3f9db73d689b47c2d1572377ba702e911a3d7109",
         "dirty": true,
         "url": "https://github.com/JieniTurtle/drone-scheduling"
       }
@@ -43,7 +43,7 @@
       ]
     ]
   },
-  "heartbeat": "2026-05-26T15:05:54.317351",
+  "heartbeat": "2026-05-26T18:29:54.592002",
   "host": {
     "ENV": {},
     "cpu": "13th Gen Intel(R) Core(TM) i9-13900H",
@@ -67,8 +67,8 @@
   "meta": {
     "command": "my_main",
     "config_updates": {
-      "label": "qmix_nounique",
-      "unique_task_assignment": false
+      "label": "qmix_unique_1_scale_2",
+      "unique_task_assignment": "true"
     },
     "named_configs": [],
     "options": {
@@ -94,8 +94,8 @@
       "--unobserved": false,
       "COMMAND": null,
       "UPDATE": [
-        "unique_task_assignment=False",
-        "label=qmix_nounique"
+        "unique_task_assignment=true",
+        "label=qmix_unique_1_scale_2"
       ],
       "help": false,
       "with": true
@@ -103,6 +103,6 @@
   },
   "resources": [],
   "result": null,
-  "start_time": "2026-05-26T14:44:22.984453",
+  "start_time": "2026-05-26T18:11:23.225518",
   "status": "RUNNING"
 }

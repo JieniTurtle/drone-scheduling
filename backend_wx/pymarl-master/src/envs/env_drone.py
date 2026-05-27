@@ -216,6 +216,13 @@ class EnvDroneEnv(MultiAgentEnv):
                 env_info["total_energy_consumed"] = float(stats.get("total_energy_consumed", env_info.get("total_energy_consumed", 0.0)))
                 env_info["avg_energy_per_task"] = float(stats.get("avg_energy_per_task", env_info.get("avg_energy_per_task", 0.0)))
                 env_info["avg_energy_per_distance"] = float(stats.get("avg_energy_per_distance", env_info.get("avg_energy_per_distance", 0.0)))
+                gen_times = getattr(self._frontend_env, "generated_task_times", [])
+                gen_times = [float(t) for t in gen_times if t is not None]
+                if len(gen_times) >= 2:
+                    diffs = [b - a for a, b in zip(gen_times, gen_times[1:]) if b >= a]
+                    env_info["avg_generation_time"] = float(sum(diffs) / len(diffs)) if diffs else 0.0
+                else:
+                    env_info["avg_generation_time"] = 0.0
 
         return float(reward), terminated, env_info
 
