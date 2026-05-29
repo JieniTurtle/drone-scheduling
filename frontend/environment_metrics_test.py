@@ -9,9 +9,7 @@
 - 支持通过命令行覆盖 num_drones、total_tasks、interval_scale、deadline_offset
 
 用法示例：
-    cd frontend
-    python environment_metrics_test.py --episodes 3 --csv
-    python environment_metrics_test.py --num-drones 10 --total-tasks 100 --interval-scale 4.0 --csv
+    python frontend/environment_metrics_test.py --interval-scale 4.0
 """
 
 from __future__ import annotations
@@ -31,6 +29,8 @@ OUTPUT_CSV = PROJECT_ROOT / "results" / "compare" / "frontend_environment_metric
 
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(FRONTEND_ROOT))
+
+from seed_interface import apply_seed
 
 
 def _load_base_config() -> Dict[str, Any]:
@@ -116,12 +116,16 @@ def _estimate_avg_generation_interval(config_data: Dict[str, Any], interval_scal
     return expected_base * float(interval_scale)
 
 
-def _run_one_episode(Environment, greedy_action_from_observation, osm_path: Path, episode_steps: int):
+def _run_one_episode(Environment, greedy_action_from_observation, osm_path: Path, episode_steps: int, seed: int | None = None):
     previous_cwd = os.getcwd()
     os.chdir(str(FRONTEND_ROOT))
     try:
         env = Environment(str(osm_path), visualize=False, episode_max_steps=episode_steps)
-        obs = env.reset()
+        if seed is not None:
+            apply_seed(seed)
+            obs = env.reset(seed=seed)
+        else:
+            obs = env.reset()
         done = False
         while not done:
             action = greedy_action_from_observation(obs)
@@ -148,24 +152,21 @@ def _run_one_episode(Environment, greedy_action_from_observation, osm_path: Path
     return result
 
 
-def _write_csv(output_path: Path, episode: int, stats: Dict[str, Any]) -> None:
+def _write_summary_csv(output_path: Path, summary: Dict[str, Any]) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     header = [
         "source",
-        "episode",
-        "episode_step",
+        "interval_scale",
+        "episodes",
         "completion_rate",
         "on_time_rate",
         "avg_delay",
         "avg_wait_time_to_load",
         "avg_delivery_time",
-        "avg_generation_to_completion_time",
+        "avg_gen_to_done",
         "avg_generation_time",
-        "total_completed",
-        "total_generated",
-        "avg_steps_per_order",
         "total_energy_consumed",
-        "max_delivery_time",
+        "total_generated_mean",
     ]
 
     existing_header = None
@@ -181,20 +182,17 @@ def _write_csv(output_path: Path, episode: int, stats: Dict[str, Any]) -> None:
             writer.writerow(header)
         writer.writerow([
             "frontend_environment_test",
-            int(episode),
-            int(stats["episode_step"]),
-            float(stats["completion_rate"]),
-            float(stats["on_time_rate"]),
-            float(stats["avg_delay"]),
-            float(stats["avg_wait_time_to_load"]),
-            float(stats["avg_delivery_time"]),
-            float(stats["avg_generation_to_completion_time"]),
-            float(stats["avg_generation_time"]),
-            int(stats["total_completed"]),
-            int(stats["total_generated"]),
-            float(stats["avg_steps_per_order"]),
-            float(stats["total_energy_consumed"]),
-            float(stats["max_delivery_time"]),
+            float(summary.get("interval_scale", 0.0)),
+            int(summary.get("episodes", 0)),
+            float(summary.get("completion_rate", 0.0)),
+            float(summary.get("on_time_rate", 0.0)),
+            float(summary.get("avg_delay", 0.0)),
+            float(summary.get("avg_wait_time_to_load", 0.0)),
+            float(summary.get("avg_delivery_time", 0.0)),
+            float(summary.get("avg_gen_to_done", 0.0)),
+            float(summary.get("avg_generation_time", 0.0)),
+            float(summary.get("total_energy_consumed", 0.0)),
+            float(summary.get("total_generated_mean", 0.0)),
         ])
 
 
@@ -203,8 +201,9 @@ def _parse_args():
     parser.add_argument("--episodes", type=int, default=3, help="测试回合数")
     parser.add_argument("--episode-steps", type=int, default=None, help="单回合最大步数")
     parser.add_argument("--osm", type=str, default="data/map/part_of_yangpu.osm", help="OSM 地图相对路径")
-    parser.add_argument("--csv", action="store_true", default=False, help="是否输出 CSV")
+    parser.add_argument("--csv", action="store_true", default=True, help="是否输出 CSV")
     parser.add_argument("--output", type=str, default=str(OUTPUT_CSV), help="CSV 输出路径")
+    parser.add_argument("--seed", type=int, default=100, help="基础随机种子，默认与后端 qmix 一致")
     parser.add_argument("--num-drones", type=int, default=None, help="覆盖无人机数量")
     parser.add_argument("--total-tasks", type=int, default=None, help="覆盖真实模式总任务数")
     parser.add_argument("--interval-scale", type=float, default=None, help="覆盖任务生成间隔缩放")
@@ -235,18 +234,21 @@ def main():
     config_data = _build_override_config(args)
     Environment, greedy_action_from_observation = _load_runtime(config_data)
 
+    base_seed = args.seed
+    if base_seed is not None:
+        apply_seed(base_seed)
+
     episode_steps = args.episode_steps or int(config_data.get("environment", {}).get("episode_max_steps", 1200))
     osm_path = FRONTEND_ROOT / args.osm
     output_path = Path(args.output)
 
     all_stats = []
     for episode in range(args.episodes):
-        stats = _run_one_episode(Environment, greedy_action_from_observation, osm_path, episode_steps)
+        episode_seed = None if base_seed is None else int(base_seed) + int(episode) + 1
+        stats = _run_one_episode(Environment, greedy_action_from_observation, osm_path, episode_steps, episode_seed)
         all_stats.append(stats)
-        if args.csv:
-            _write_csv(output_path, episode + 1, stats)
         print(
-            f"Episode {episode + 1}: completion={stats['completion_rate']:.4f}, "
+            f"Episode {episode + 1} (seed={episode_seed}): completion={stats['completion_rate']:.4f}, "
             f"on_time={stats['on_time_rate']:.4f}, avg_delay={stats['avg_delay']:.4f}, "
             f"avg_wait={stats['avg_wait_time_to_load']:.4f}, "
             f"avg_delivery={stats['avg_delivery_time']:.4f}, "
@@ -267,6 +269,19 @@ def main():
     mean_gen_interval = sum(item["avg_generation_time"] for item in all_stats) / n
     mean_energy = sum(item["total_energy_consumed"] for item in all_stats) / n
     mean_total_generated = sum(item["total_generated"] for item in all_stats) / n
+    summary_row = {
+        "interval_scale": float(args.interval_scale) if args.interval_scale is not None else 0.0,
+        "episodes": int(args.episodes),
+        "completion_rate": mean_completion,
+        "on_time_rate": mean_on_time,
+        "avg_delay": mean_delay,
+        "avg_wait_time_to_load": mean_wait,
+        "avg_delivery_time": mean_delivery,
+        "avg_gen_to_done": mean_gen_to_done,
+        "avg_generation_time": mean_gen_interval,
+        "total_energy_consumed": mean_energy,
+        "total_generated_mean": mean_total_generated,
+    }
 
     print("=" * 72)
     print("Mean Metrics")
@@ -280,6 +295,7 @@ def main():
     print(f"total_energy_consumed:   {mean_energy:.4f}")
     print(f"total_generated (mean):   {mean_total_generated:.1f}")
     if args.csv:
+        _write_summary_csv(output_path, summary_row)
         print(f"csv_file:               {output_path}")
     print("=" * 72)
 

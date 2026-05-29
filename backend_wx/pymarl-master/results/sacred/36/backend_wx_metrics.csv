@@ -1,4 +1,0 @@
-source,episode,t_env,mode,episode_step,completion_rate,on_time_rate,avg_delay,avg_wait_time_to_load,avg_delivery_time,avg_generation_to_completion_time,avg_generation_time,total_completed,total_generated,avg_steps_per_order,total_energy_consumed,max_delivery_time
-backend_wx,1,102000,test,1097,1.0,1.0,0.0,4.55,127.8,132.35,50.1578947368421,20,20,127.8,25337.257064446763,285.0
-backend_wx,2,102000,test,1049,1.0,1.0,0.0,9.25,135.95,145.2,46.21052631578947,20,20,135.95,26942.369029488713,224.0
-backend_wx,3,102000,test,1274,1.0,1.0,0.0,15.45,136.0,151.45,48.68421052631579,20,20,136.0,26976.98867030346,349.0

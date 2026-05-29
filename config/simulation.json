@@ -5,7 +5,7 @@
     "print_route_debug": false,
     "allow_multi_task": true,
     "max_obs_tasks": 3,
-    "reward_step": -0.1,
+    "reward_step": -0.01,
     "reward_priority_1": 100.0,
     "reward_priority_2": 80.0,
     "reward_priority_3": 50.0,
@@ -27,7 +27,7 @@
       "off_peak_steps_per_task": 9,
       "peak_probability": 0.85,
       "cycle_length": 500,
-      "interval_scale": 3.5,
+      "interval_scale": 1.0,
       "interval_variance_ratio": 0.2,
       "hotspot": {
         "enabled": true,

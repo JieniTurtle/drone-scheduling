@@ -1,27 +1,25 @@
+import argparse
+import copy
 import csv
+import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 
-def _list_sacred_runs(sacred_root):
-    if not sacred_root.exists():
-        return set()
-    return {p.name for p in sacred_root.iterdir() if p.is_dir() and p.name.isdigit()}
-
-
-def _pick_sacred_run(sacred_root, before_runs):
-    after_runs = _list_sacred_runs(sacred_root)
-    new_runs = sorted(after_runs - before_runs)
-    if new_runs:
-        return new_runs[-1]
-    if not after_runs:
-        return None
-    return max(
-        (sacred_root / run_id for run_id in after_runs),
-        key=lambda p: p.stat().st_mtime,
-    ).name
+SUMMARY_KEYS = [
+    "completion_rate",
+    "on_time_rate",
+    "avg_delay",
+    "avg_wait_time_to_load",
+    "avg_delivery_time",
+    "avg_gen_to_done",
+    "avg_generation_time",
+    "total_energy_consumed",
+    "total_generated_mean",
+]
 
 
 def _wait_for_file(path, timeout_s=30):
@@ -76,137 +74,157 @@ def _average_metrics(rows, columns):
     return metrics
 
 
-def _ordered_metric_items(metrics):
-    metric_order = [
-        "episode_step",
-        "completion_rate",
-        "on_time_rate",
-        "avg_delay",
-        "avg_wait_time_to_load",
-        "avg_delivery_time",
-        "avg_generation_to_completion_time",
-        "avg_generation_time",
-        "total_completed",
-        "total_generated",
-        "avg_steps_per_order",
-        "total_energy_consumed",
-        "max_delivery_time",
-    ]
-    ordered = []
-    for key in metric_order:
-        if key in metrics:
-            ordered.append((key, metrics[key]))
-    for key in sorted(k for k in metrics if k not in metric_order):
-        ordered.append((key, metrics[key]))
-    return ordered
+def _normalize_metric_names(metrics):
+    normalized = dict(metrics)
+    if "avg_generation_to_completion_time" in normalized and "avg_gen_to_done" not in normalized:
+        normalized["avg_gen_to_done"] = normalized.pop("avg_generation_to_completion_time")
+    if "total_generated" in normalized and "total_generated_mean" not in normalized:
+        normalized["total_generated_mean"] = normalized.pop("total_generated")
+    return {key: normalized[key] for key in SUMMARY_KEYS if key in normalized}
+
+
+def _parse_interval_scales(values):
+    if isinstance(values, str):
+        values = [values]
+
+    scales = []
+    for item in values:
+        if item is None:
+            continue
+        for part in str(item).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            scales.append(float(part))
+    return scales
+
+
+def _load_shared_config(config_path):
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _write_shared_config(config_path, config_data):
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, ensure_ascii=False, indent=2)
+
+
+def _set_interval_scale(config_data, interval_scale):
+    updated = copy.deepcopy(config_data)
+    task_generation_cfg = updated.setdefault("task_generation", {})
+    realistic_cfg = task_generation_cfg.setdefault("realistic", {})
+    realistic_cfg["interval_scale"] = float(interval_scale)
+    return updated
 
 
 def main():
     pymarl_root = Path(__file__).resolve().parents[1]
     workspace_root = Path(__file__).resolve().parents[3]
-    sacred_root = pymarl_root / "results" / "sacred"
-    compare_csv = workspace_root / "results" / "compare" / "backend_wx_metrics.csv"
+    compare_dir = workspace_root / "results" / "compare"
+    compare_csv = compare_dir / "backend_wx_metrics.csv"
+    config_path = workspace_root / "config" / "simulation.json"
 
-    # ---- Batch test configuration ----
-    algs = ["qmix", "iql", "vdn"]
-    unique_flags = [False, True]
+    parser = argparse.ArgumentParser(description="Batch evaluate backend_wx and aggregate metrics by interval_scale.")
+    parser.add_argument(
+        "--interval-scales",
+        nargs="+",
+        default=["3.5", "3", "2.5", "2", "1.5", "1"],
+        help="Interval scales to evaluate. Supports space-separated values and comma-separated strings.",
+    )
+    parser.add_argument("--repeats", type=int, default=3, help="Number of runs per interval_scale.")
+    parser.add_argument("--test-nepisode", type=int, default=3, help="test_nepisode passed to PyMARL.")
+    parser.add_argument("--batch-size-run", type=int, default=1, help="batch_size_run passed to PyMARL.")
+    parser.add_argument("--use-cuda", action="store_true", default=False, help="Enable CUDA for evaluation.")
+    parser.add_argument("--save-model", action="store_true", default=False, help="Enable model saving.")
+    parser.add_argument(
+        "--checkpoint-path",
+        type=str,
+        default="results/models/qmix__2026-05-10_20-33-19",
+        help="Checkpoint directory relative to pymarl_root.",
+    )
+    parser.add_argument(
+        "--load-step",
+        type=int,
+        default=0,
+        help="Load step passed to PyMARL. 0 means latest.",
+    )
+    parser.add_argument("--unique-task-assignment", action="store_true", default=False, help="Use unique task assignment.")
+    parser.add_argument("--label-prefix", type=str, default="backend_wx_interval_scale_test", help="Run label prefix.")
+    args = parser.parse_args()
 
-    test_nepisode = 4
-    batch_size_run = 1
-    use_cuda = False
-    save_model = False
+    interval_scales = _parse_interval_scales(args.interval_scales)
+    if not interval_scales:
+        raise ValueError("--interval-scales cannot be empty")
 
-    # Per-combination checkpoint path (relative to pymarl_root).
-    # Keys are (alg, unique_flag).
-    checkpoints = {
-        ("qmix", False): "results/models/qmix__2026-05-10_20-33-19",
-        ("qmix", True): "",
-        ("iql", False): "",
-        ("iql", True): "",
-        ("vdn", False): "",
-        ("vdn", True): "",
-    }
-
-    label_template = "{alg}_unique_{unique}_test{test_nepisode}"
-
+    original_config = _load_shared_config(config_path)
     results = []
-    all_metric_keys = []
 
-    for alg in algs:
-        for unique in unique_flags:
-            checkpoint_path = checkpoints.get((alg, bool(unique)), "")
-            if not checkpoint_path:
-                print(f"Skipping {alg} unique={int(unique)}: checkpoint_path not set.")
-                continue
-            label = label_template.format(
-                alg=alg,
-                unique=int(unique),
-                test_nepisode=test_nepisode,
+    try:
+        for interval_scale in interval_scales:
+            scale_config = _set_interval_scale(original_config, interval_scale)
+            _write_shared_config(config_path, scale_config)
+
+            repeat_metrics = []
+            for repeat_idx in range(args.repeats):
+                label = f"{args.label_prefix}_scale_{interval_scale:g}_rep_{repeat_idx + 1}"
+                env = os.environ.copy()
+                env["PYMARL_DISABLE_SACRED"] = "1"
+                env["PYMARL_METRICS_DIR"] = str(compare_dir)
+                cmd = [
+                    sys.executable,
+                    str(pymarl_root / "src" / "main.py"),
+                    "--config=qmix",
+                    "--env-config=env_drone",
+                    "with",
+                    f"unique_task_assignment={str(bool(args.unique_task_assignment))}",
+                    "evaluate=True",
+                    f"checkpoint_path={args.checkpoint_path}",
+                    f"load_step={int(args.load_step)}",
+                    f"test_nepisode={int(args.test_nepisode)}",
+                    f"batch_size_run={int(args.batch_size_run)}",
+                    f"use_cuda={str(bool(args.use_cuda))}",
+                    f"save_model={str(bool(args.save_model))}",
+                    f"label={label}",
+                ]
+                print("Running:", " ".join(cmd))
+                subprocess.run(cmd, cwd=str(pymarl_root), check=True, env=env)
+
+                if not _wait_for_file(compare_csv, timeout_s=30):
+                    print(f"Warning: metrics CSV not found at {compare_csv}; skip.")
+                    continue
+
+                rows, columns = _load_metrics_rows(compare_csv)
+                rows = _filter_test_rows(rows)
+                metric_means = _normalize_metric_names(_average_metrics(rows, columns))
+                repeat_metrics.append(metric_means)
+
+            combined = _normalize_metric_names(
+                _average_metrics(repeat_metrics, sorted({key for metrics in repeat_metrics for key in metrics}))
             )
-            before_runs = _list_sacred_runs(sacred_root)
-            cmd = [
-                sys.executable,
-                str(pymarl_root / "src" / "main.py"),
-                f"--config={alg}",
-                "--env-config=env_drone",
-                "with",
-                f"unique_task_assignment={str(bool(unique))}",
-                "evaluate=True",
-                f"checkpoint_path={checkpoint_path}",
-                f"test_nepisode={test_nepisode}",
-                f"batch_size_run={batch_size_run}",
-                f"use_cuda={str(bool(use_cuda))}",
-                f"save_model={str(bool(save_model))}",
-                f"label={label}",
-            ]
-            print("Running:", " ".join(cmd))
-            subprocess.run(cmd, cwd=str(pymarl_root), check=True)
+            combined["interval_scale"] = float(interval_scale)
+            combined["repeats"] = int(args.repeats)
+            combined["test_nepisode"] = int(args.test_nepisode)
 
-            sacred_run_id = _pick_sacred_run(sacred_root, before_runs)
-            if not sacred_run_id:
-                print("Warning: sacred run directory not found; skip metrics.")
-                continue
-
-            metrics_csv = sacred_root / sacred_run_id / "backend_wx_metrics.csv"
-            if not _wait_for_file(metrics_csv, timeout_s=30):
-                print(f"Warning: metrics CSV not found at {metrics_csv}; skip.")
-                continue
-
-            rows, columns = _load_metrics_rows(metrics_csv)
-            rows = _filter_test_rows(rows)
-            metric_means = _average_metrics(rows, columns)
-            for key, _ in _ordered_metric_items(metric_means):
-                if key not in all_metric_keys:
-                    all_metric_keys.append(key)
-
-            results.append({
-                "alg": alg,
-                "unique_task_assignment": int(unique),
-                "checkpoint_path": checkpoint_path,
-                "test_nepisode": test_nepisode,
-                "batch_size_run": batch_size_run,
-                "use_cuda": int(use_cuda),
-                "save_model": int(save_model),
-                "label": label,
-                "sacred_run_id": sacred_run_id,
-                **metric_means,
-            })
+            results.append(combined)
+            print(
+                f"interval_scale={interval_scale:g}: completion_rate={combined.get('completion_rate', 0.0):.4f}, "
+                f"on_time_rate={combined.get('on_time_rate', 0.0):.4f}, "
+                f"avg_delay={combined.get('avg_delay', 0.0):.4f}, "
+                f"avg_wait_time_to_load={combined.get('avg_wait_time_to_load', 0.0):.4f}, "
+                f"avg_delivery_time={combined.get('avg_delivery_time', 0.0):.4f}, "
+                f"avg_gen_to_done={combined.get('avg_gen_to_done', 0.0):.4f}, "
+                f"avg_generation_time={combined.get('avg_generation_time', 0.0):.4f}, "
+                f"total_energy_consumed={combined.get('total_energy_consumed', 0.0):.4f}, "
+                f"total_generated(mean)={combined.get('total_generated_mean', 0.0):.1f}"
+            )
+    finally:
+        _write_shared_config(config_path, original_config)
 
     compare_csv.parent.mkdir(parents=True, exist_ok=True)
-    metric_columns = all_metric_keys
-    base_columns = [
-        "alg",
-        "unique_task_assignment",
-        "checkpoint_path",
-        "test_nepisode",
-        "batch_size_run",
-        "use_cuda",
-        "save_model",
-        "label",
-        "sacred_run_id",
-    ]
+    fieldnames = ["interval_scale", "repeats", "test_nepisode"] + SUMMARY_KEYS
     with open(compare_csv, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=base_columns + metric_columns)
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in results:
             writer.writerow(row)
