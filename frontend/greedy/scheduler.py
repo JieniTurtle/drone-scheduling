@@ -1,4 +1,14 @@
 import math
+import random
+
+from config.config_loder import get_shared_config
+
+
+_CFG = get_shared_config()
+_GREEDY_CFG = _CFG.get("environment", {}).get("greedy", {})
+MAX_ASSIGNMENTS_PER_STEP = int(_GREEDY_CFG.get("max_assignments_per_step", 2))
+CANDIDATE_LIMIT = int(_GREEDY_CFG.get("candidate_limit", 1))
+ACCEPT_PROBABILITY = float(_GREEDY_CFG.get("accept_probability", 0.65))
 
 
 class GreedyScheduler:
@@ -29,16 +39,26 @@ class GreedyScheduler:
             return {}
 
         assignments = {}
+        max_assignments_per_step = max(1, MAX_ASSIGNMENTS_PER_STEP)
+        candidate_limit = max(1, CANDIDATE_LIMIT)
+        accept_probability = min(max(ACCEPT_PROBABILITY, 0.0), 1.0)
 
         drone_is_free = observation.get('drone_is_free', [])
 
         # 为每个空闲且电量充足的无人机分配任务
         for drone_idx, (drone_pos, free_mask) in enumerate(zip(drone_positions, drone_free_masks)):
+            if len(assignments) >= max_assignments_per_step:
+                break
+
             # 优先使用 observation 中的 drone_is_free 字段（不受 padding 影响）
             if drone_is_free and len(drone_is_free) > drone_idx:
                 if not drone_is_free[drone_idx]:
                     continue
             elif not all(free_mask):  # fallback: 无 drone_is_free 时降级到 free_mask 判断
+                continue
+
+            # 随机丢弃一部分可分配机会，降低贪心吞吐
+            if random.random() > accept_probability:
                 continue
 
             # 如果没有任务可分配，跳过
@@ -47,8 +67,10 @@ class GreedyScheduler:
 
             current_pos = tuple(drone_pos)
 
-            # 选择离当前位置最近的任务（不再检查载重）
-            nearest_task = min(unassigned_tasks_info, key=lambda t: GreedyScheduler.euclidean_distance(current_pos, tuple(t['source'])))
+            candidate_tasks = unassigned_tasks_info[:candidate_limit]
+
+            # 只在前几个候选任务里挑最近的一个，刻意削弱全局最优倾向
+            nearest_task = min(candidate_tasks, key=lambda t: GreedyScheduler.euclidean_distance(current_pos, tuple(t['source'])))
 
             # 分配任务
             assignments[drone_idx] = [nearest_task['task_id']]

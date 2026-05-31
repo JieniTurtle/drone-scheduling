@@ -18,11 +18,13 @@ from seed_interface import apply_seed
 
 CFG = get_shared_config()
 ENV_CFG = CFG.get("environment", {})
+DRONE_CFG = CFG.get("drone", {})
 DEFAULT_EPISODE_MAX_STEPS = int(ENV_CFG.get("episode_max_steps", 1200))
 DEFAULT_NUM_DRONES = int(ENV_CFG.get("num_drones", 3))
 PRINT_ROUTE_DEBUG = bool(ENV_CFG.get("print_route_debug", False))
 ALLOW_MULTI_TASK = bool(ENV_CFG.get("allow_multi_task", True))
 MAX_OBS_TASKS = int(ENV_CFG.get("max_obs_tasks", 20))
+MAX_MULTI_TASK_TOTAL_WEIGHT = float(ENV_CFG.get("multi_task_max_total_weight", DRONE_CFG.get("carrying_capacity", 5)))
 
 class Environment:
     def __init__(self, osm_file_path, visualize=False, episode_max_steps=DEFAULT_EPISODE_MAX_STEPS):
@@ -274,6 +276,10 @@ class Environment:
                                 break
 
                         if task_to_assign is not None:
+                            planned_total_weight = float(drone.current_load) + float(task_to_assign.get_weight())
+                            if planned_total_weight > MAX_MULTI_TASK_TOTAL_WEIGHT or planned_total_weight > float(drone.carrying_capacity):
+                                continue
+
                             same_source = (
                                 ALLOW_MULTI_TASK
                                 and pending_source is not None
@@ -300,6 +306,7 @@ class Environment:
                                     self.drone_assignments[drone_idx] = [
                                         self.drone_assignments[drone_idx]
                                     ]
+                                drone.add_load(task_to_assign.get_weight())
                                 self.drone_assignments[drone_idx].append({
                                     'task': task_to_assign,
                                     'start_time': self.current_time
@@ -308,6 +315,7 @@ class Environment:
                                 # 新任务：完整规划路线
                                 route = self.plan_route_for_tasks(drone, [task_to_assign])
                                 drone.schedule_route(route, task_to_assign.task_id)
+                                drone.add_load(task_to_assign.get_weight())
                                 self.drone_assignments[drone_idx] = [{
                                     'task': task_to_assign,
                                     'start_time': self.current_time

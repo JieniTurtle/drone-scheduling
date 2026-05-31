@@ -5,6 +5,12 @@
     "print_route_debug": false,
     "allow_multi_task": true,
     "max_obs_tasks": 3,
+    "multi_task_max_total_weight": 5.0,
+    "greedy": {
+      "max_assignments_per_step": 2,
+      "candidate_limit": 1,
+      "accept_probability": 0.65
+    },
     "reward_step": -0.01,
     "reward_priority_1": 100.0,
     "reward_priority_2": 80.0,
