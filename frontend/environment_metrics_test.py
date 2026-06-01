@@ -198,12 +198,12 @@ def _write_summary_csv(output_path: Path, summary: Dict[str, Any]) -> None:
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="前端环境贪心测试脚本")
-    parser.add_argument("--episodes", type=int, default=3, help="测试回合数")
+    parser.add_argument("--episodes", type=int, default=1, help="测试回合数")
     parser.add_argument("--episode-steps", type=int, default=None, help="单回合最大步数")
     parser.add_argument("--osm", type=str, default="data/map/part_of_yangpu.osm", help="OSM 地图相对路径")
     parser.add_argument("--csv", action="store_true", default=True, help="是否输出 CSV")
     parser.add_argument("--output", type=str, default=str(OUTPUT_CSV), help="CSV 输出路径")
-    parser.add_argument("--seed", type=int, default=100, help="基础随机种子，默认与后端 qmix 一致")
+    parser.add_argument("--seed", type=int, default=187, help="基础随机种子，默认与后端 qmix 一致")
     parser.add_argument("--num-drones", type=int, default=None, help="覆盖无人机数量")
     parser.add_argument("--total-tasks", type=int, default=None, help="覆盖真实模式总任务数")
     parser.add_argument("--interval-scale", type=float, default=None, help="覆盖任务生成间隔缩放")

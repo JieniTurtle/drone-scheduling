@@ -9,6 +9,8 @@ _GREEDY_CFG = _CFG.get("environment", {}).get("greedy", {})
 MAX_ASSIGNMENTS_PER_STEP = int(_GREEDY_CFG.get("max_assignments_per_step", 2))
 CANDIDATE_LIMIT = int(_GREEDY_CFG.get("candidate_limit", 1))
 ACCEPT_PROBABILITY = float(_GREEDY_CFG.get("accept_probability", 0.65))
+MIN_BATTERY_RATIO = float(_GREEDY_CFG.get("min_battery_ratio", 0.6))
+MAX_ACTIVE_DRONES_RATIO = float(_GREEDY_CFG.get("max_active_drones_ratio", 0.5))
 
 
 class GreedyScheduler:
@@ -42,13 +44,20 @@ class GreedyScheduler:
         max_assignments_per_step = max(1, MAX_ASSIGNMENTS_PER_STEP)
         candidate_limit = max(1, CANDIDATE_LIMIT)
         accept_probability = min(max(ACCEPT_PROBABILITY, 0.0), 1.0)
+        min_battery_ratio = min(max(MIN_BATTERY_RATIO, 0.0), 1.0)
+        max_active_drones_ratio = min(max(MAX_ACTIVE_DRONES_RATIO, 0.0), 1.0)
 
         drone_is_free = observation.get('drone_is_free', [])
+        drone_batteries = observation.get('drone_batteries', [])
+        max_active_drones = max(1, int(math.ceil(len(drone_positions) * max_active_drones_ratio)))
 
         # 为每个空闲且电量充足的无人机分配任务
         for drone_idx, (drone_pos, free_mask) in enumerate(zip(drone_positions, drone_free_masks)):
             if len(assignments) >= max_assignments_per_step:
                 break
+
+            if drone_idx >= max_active_drones:
+                continue
 
             # 优先使用 observation 中的 drone_is_free 字段（不受 padding 影响）
             if drone_is_free and len(drone_is_free) > drone_idx:
@@ -56,6 +65,13 @@ class GreedyScheduler:
                     continue
             elif not all(free_mask):  # fallback: 无 drone_is_free 时降级到 free_mask 判断
                 continue
+
+            if drone_batteries and len(drone_batteries) > drone_idx:
+                battery = drone_batteries[drone_idx]
+                capacity = float(battery.get('capacity', 1.0))
+                current = float(battery.get('current', 0.0))
+                if capacity > 0 and (current / capacity) < min_battery_ratio:
+                    continue
 
             # 随机丢弃一部分可分配机会，降低贪心吞吐
             if random.random() > accept_probability:

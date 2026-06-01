@@ -1,23 +1,25 @@
 {
   "environment": {
-    "episode_max_steps": 3000,
-    "num_drones": 10,
+    "episode_max_steps": 2000,
+    "num_drones": 12,
     "print_route_debug": false,
     "allow_multi_task": true,
-    "max_obs_tasks": 3,
+    "max_obs_tasks": 5,
     "multi_task_max_total_weight": 5.0,
     "greedy": {
       "max_assignments_per_step": 2,
       "candidate_limit": 1,
-      "accept_probability": 0.65
+      "accept_probability": 0.75,
+      "min_battery_ratio": 0.55,
+      "max_active_drones_ratio": 0.8
     },
     "reward_step": -0.01,
     "reward_priority_1": 100.0,
-    "reward_priority_2": 80.0,
-    "reward_priority_3": 50.0,
+    "reward_priority_2": 100.0,
+    "reward_priority_3": 100.0,
     "penalty_late_rate": -0.01,
-    "overdue_initial_penalty": -40.0,
-    "overdue_step_penalty": -0.01
+    "overdue_initial_penalty": -30.0,
+    "overdue_step_penalty": -0.1
   },
   "task_generation": {
     "mode": "realistic",
@@ -27,10 +29,10 @@
       "initial_task_count": 5
     },
     "realistic": {
-      "total_tasks": 60,
+      "total_tasks": 70,
       "initial_task_count": 3,
       "peak_steps_per_task": 5,
-      "off_peak_steps_per_task": 9,
+      "off_peak_steps_per_task": 7,
       "peak_probability": 0.85,
       "cycle_length": 500,
       "interval_scale": 1.0,

@@ -4,14 +4,14 @@
 action_selector: "epsilon_greedy"
 epsilon_start: 1
 epsilon_finish: 0.02
-epsilon_anneal_time: 100000
+epsilon_anneal_time: 200000
 
 runner: "episode"
 
 buffer_size: 256
 
 # update the target network every {} episodes
-target_update_interval: 80
+target_update_interval: 30
 
 # use the Q_Learner to train
 agent_output_type: "q"
