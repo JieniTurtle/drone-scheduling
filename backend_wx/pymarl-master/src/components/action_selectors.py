@@ -56,15 +56,41 @@ class EpsilonGreedyActionSelector():
 
         random_numbers = th.rand_like(agent_inputs[:, :, 0])
         pick_random = (random_numbers < self.epsilon).long()
-        random_actions = Categorical(avail_actions.float()).sample().long()
-
         if getattr(self.args, "unique_task_assignment", False):
+            random_actions = self._select_unique_random_actions(avail_actions)
             greedy_actions = self._select_unique_task_actions(masked_q_values, avail_actions)
         else:
+            random_actions = Categorical(avail_actions.float()).sample().long()
             greedy_actions = masked_q_values.max(dim=2)[1]
 
         picked_actions = pick_random * random_actions + (1 - pick_random) * greedy_actions
         return picked_actions
+
+    def _select_unique_random_actions(self, avail_actions):
+        """Random exploration without duplicate non-NoOp task actions in a batch item."""
+        bs, n_agents, _ = avail_actions.shape
+        noop_action = int(getattr(self.args, "noop_action", 0))
+        out = th.full((bs, n_agents), noop_action, dtype=th.long, device=avail_actions.device)
+
+        for b in range(bs):
+            used_tasks = set()
+            agent_order = th.randperm(n_agents, device=avail_actions.device).tolist()
+            for agent_idx in agent_order:
+                valid = th.nonzero(avail_actions[b, agent_idx] > 0, as_tuple=False).view(-1).tolist()
+                filtered = [
+                    int(action)
+                    for action in valid
+                    if int(action) == noop_action or int(action) not in used_tasks
+                ]
+                if not filtered:
+                    continue
+                choice_idx = int(th.randint(len(filtered), (1,), device=avail_actions.device).item())
+                action = filtered[choice_idx]
+                out[b, agent_idx] = action
+                if action != noop_action:
+                    used_tasks.add(action)
+
+        return out
 
     def _select_unique_task_actions(self, masked_q_values, avail_actions):
         """Greedy matching to avoid duplicate non-NoOp tasks (fast for 10 agents)."""

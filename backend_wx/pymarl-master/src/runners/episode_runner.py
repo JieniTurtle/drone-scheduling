@@ -30,6 +30,8 @@ class EpisodeRunner:
         self.metrics_file = self._resolve_metrics_file()
         self._metrics_header_written = False
         self._metrics_columns = [
+            "时间步",
+            "模式",
             "总步数",
             "完成任务数",
             "生成任务数",
@@ -196,6 +198,7 @@ class EpisodeRunner:
             return
 
         os.makedirs(os.path.dirname(self.metrics_file), exist_ok=True)
+        mode = "test" if test_mode else "train"
 
         need_header = (not self._metrics_header_written) and (not os.path.exists(self.metrics_file))
         with open(self.metrics_file, "a", newline="", encoding="utf-8-sig") as f:
@@ -204,6 +207,8 @@ class EpisodeRunner:
                 writer.writerow(self._metrics_columns)
                 self._metrics_header_written = True
             writer.writerow([
+                int(self.t_env),
+                mode,
                 int(self.t),
                 int(env_info.get("total_completed", 0)),
                 int(env_info.get("total_generated", 0)),
@@ -242,21 +247,23 @@ class EpisodeRunner:
             writer.writerow(self._metrics_columns)
             for row in rows:
                 writer.writerow([
-                    row.get("episode_step", ""),
-                    row.get("total_completed", ""),
-                    row.get("total_generated", ""),
-                    row.get("completion_rate", ""),
-                    row.get("avg_generation_to_assignment_wait", ""),
-                    row.get("avg_assignment_to_load_wait", row.get("avg_wait_time_to_load", "")),
-                    row.get("avg_load_to_delivery_time", row.get("avg_delivery_time", "")),
-                    row.get("avg_generation_to_completion_time", ""),
-                    row.get("max_generation_to_completion_time", row.get("max_delivery_time", "")),
-                    row.get("timeout_rate", ""),
-                    row.get("avg_delay", ""),
-                    row.get("avg_delay_priority_1", ""),
-                    row.get("avg_delay_priority_2", ""),
-                    row.get("avg_delay_priority_3", ""),
-                    row.get("total_energy_consumed", ""),
+                    row.get("时间步", row.get("t_env", "")),
+                    row.get("模式", row.get("mode", "")),
+                    row.get("总步数", row.get("episode_step", "")),
+                    row.get("完成任务数", row.get("total_completed", "")),
+                    row.get("生成任务数", row.get("total_generated", "")),
+                    row.get("完成率", row.get("completion_rate", "")),
+                    row.get("从生成到分配等待时间", row.get("avg_generation_to_assignment_wait", "")),
+                    row.get("从分配到实际装载上机等待时间", row.get("avg_assignment_to_load_wait", row.get("avg_wait_time_to_load", ""))),
+                    row.get("从上机到送达平均时间", row.get("avg_load_to_delivery_time", row.get("avg_delivery_time", ""))),
+                    row.get("从生成到完成总时间平均", row.get("avg_generation_to_completion_time", "")),
+                    row.get("从生成到完成总时间最大", row.get("max_generation_to_completion_time", row.get("max_delivery_time", ""))),
+                    row.get("超时率", row.get("timeout_rate", "")),
+                    row.get("平均时延", row.get("avg_delay", "")),
+                    row.get("优先级1平均时延", row.get("avg_delay_priority_1", "")),
+                    row.get("优先级2平均时延", row.get("avg_delay_priority_2", "")),
+                    row.get("优先级3平均时延", row.get("avg_delay_priority_3", "")),
+                    row.get("总能量消耗", row.get("total_energy_consumed", "")),
                 ])
 
         os.replace(temp_file, self.metrics_file)

@@ -93,8 +93,15 @@ class QLearner:
         # 0-out the targets that came from padded data
         masked_td_error = td_error * mask
 
-        # Normal L2 loss, take mean over actual data
-        loss = (masked_td_error ** 2).sum() / mask.sum()
+        if getattr(self.args, "use_huber_loss", False):
+            delta = float(getattr(self.args, "huber_delta", 1.0))
+            abs_error = masked_td_error.abs()
+            quadratic = th.clamp(abs_error, max=delta)
+            linear = abs_error - quadratic
+            loss = (0.5 * quadratic ** 2 + delta * linear).sum() / mask.sum()
+        else:
+            # Normal L2 loss, take mean over actual data
+            loss = (masked_td_error ** 2).sum() / mask.sum()
 
         # Optimise
         self.optimiser.zero_grad()

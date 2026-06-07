@@ -1,6 +1,6 @@
 {
   "environment": {
-    "episode_max_steps": 1500,
+    "episode_max_steps": 2000,
     "num_drones": 10,
     "print_route_debug": false,
     "allow_multi_task": true,
@@ -15,11 +15,14 @@
     },
     "reward_step": -0.01,
     "reward_priority_1": 100.0,
-    "reward_priority_2": 100.0,
-    "reward_priority_3": 100.0,
+    "reward_priority_2": 150.0,
+    "reward_priority_3": 200.0,
     "penalty_late_rate": -0.01,
     "overdue_initial_penalty": -30.0,
-    "overdue_step_penalty": -0.1
+    "overdue_step_penalty": -0.1,
+    "priority_delay_penalty_weight_1": 1.0,
+    "priority_delay_penalty_weight_2": 1.5,
+    "priority_delay_penalty_weight_3": 2.2
   },
   "task_generation": {
     "mode": "realistic",
@@ -56,11 +59,27 @@
   },
   "qmix_reward": {
     "completion_bonus": 2.0,
-    "backlog_penalty": 0.08,
-    "invalid_action_penalty": 1.0,
-    "overdue_step_penalty": 0.1,
+    "backlog_penalty": 0.02,
+    "invalid_action_penalty": 0.5,
+    "overdue_step_penalty": 0.2,
     "idle_penalty": 0.02,
-    "uncompleted_penalty": 10.0
+    "uncompleted_penalty": 30.0,
+    "completion_rate_bonus": 100.0,
+    "priority_delay_weight_1": 1.0,
+    "priority_delay_weight_2": 1.5,
+    "priority_delay_weight_3": 2.2,
+    "urgency_backlog_base": 0.25,
+    "overdue_severity_scale": 100.0,
+    "terminal_delay_penalty": 0.08,
+    "reward_scale": 0.02,
+    "reward_clip": 5.0
+  },
+  "qmix_assignment_repair": {
+    "enabled": true,
+    "priority_weight": 2.0,
+    "urgency_weight": 5.0,
+    "source_distance_weight": 1.5,
+    "route_distance_weight": 0.5
   },
   "task": {
     "positions_file": "../config/positions.json",
@@ -68,8 +87,8 @@
     "weight_max": 4,
     "priority_min": 1,
     "priority_max": 3,
-    "deadline_offset_min": 100,
-    "deadline_offset_max": 200,
+    "deadline_offset_min": 200,
+    "deadline_offset_max": 300,
     "warehouse_pos": [
       357600.574872369,
       3462308.772003661

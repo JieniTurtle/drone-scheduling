@@ -67,6 +67,25 @@ class EnvDroneEnv(MultiAgentEnv):
         self._reward_overdue_step_penalty = float(self._reward_cfg.get("overdue_step_penalty", 0.0))
         self._reward_idle_penalty = float(self._reward_cfg.get("idle_penalty", 0.0))
         self._reward_uncompleted_penalty = float(self._reward_cfg.get("uncompleted_penalty", 0.0))
+        self._reward_completion_rate_bonus = float(self._reward_cfg.get("completion_rate_bonus", 0.0))
+        self._reward_priority_delay_weights = {
+            1: float(self._reward_cfg.get("priority_delay_weight_1", 1.0)),
+            2: float(self._reward_cfg.get("priority_delay_weight_2", 1.5)),
+            3: float(self._reward_cfg.get("priority_delay_weight_3", 2.0)),
+        }
+        self._reward_urgency_backlog_base = float(self._reward_cfg.get("urgency_backlog_base", 0.25))
+        self._reward_overdue_severity_scale = float(self._reward_cfg.get("overdue_severity_scale", 100.0))
+        self._reward_terminal_delay_penalty = float(self._reward_cfg.get("terminal_delay_penalty", 0.0))
+        self._reward_scale = float(self._reward_cfg.get("reward_scale", 1.0))
+        self._reward_clip = self._reward_cfg.get("reward_clip", None)
+        if self._reward_clip is not None:
+            self._reward_clip = abs(float(self._reward_clip))
+        repair_cfg = shared_cfg.get("qmix_assignment_repair", {})
+        self._repair_assignments = bool(repair_cfg.get("enabled", True))
+        self._repair_priority_weight = float(repair_cfg.get("priority_weight", 2.0))
+        self._repair_urgency_weight = float(repair_cfg.get("urgency_weight", 5.0))
+        self._repair_source_distance_weight = float(repair_cfg.get("source_distance_weight", 1.5))
+        self._repair_route_distance_weight = float(repair_cfg.get("route_distance_weight", 0.5))
         self._t = 0
         self._last_obs = None
         self._prev_completed = 0
@@ -79,13 +98,7 @@ class EnvDroneEnv(MultiAgentEnv):
         task_id = task.get("task_id")
         if isinstance(task_id, str) and task_id.startswith("__pad_"):
             return True
-        remaining_time = task.get("remaining_time")
-        if remaining_time is None:
-            return False
-        try:
-            return float(remaining_time) < 0
-        except (TypeError, ValueError):
-            return False
+        return task_id is None
 
     def _resolve_project_root(self, frontend_root):
         if frontend_root:
@@ -175,19 +188,22 @@ class EnvDroneEnv(MultiAgentEnv):
         assignments = {}
         unassigned_tasks = obs_before.get("unassigned_tasks", [])
         drone_is_free = obs_before.get("drone_is_free", [True] * self.n_agents)
+        drone_free_masks = obs_before.get("drone_free_masks", [])
+        drone_positions = obs_before.get("drone_positions", [[0.0, 0.0]] * self.n_agents)
         invalid_actions = 0
         idle_actions = 0
+        used_task_ids = set()
 
         for agent_id, action in enumerate(action_list):
             if action <= 0:
                 if agent_id < len(drone_is_free) and drone_is_free[agent_id]:
                     idle_actions += 1
                 continue
-            if agent_id >= len(drone_is_free) or not drone_is_free[agent_id]:
-                invalid_actions += 1
-                continue
             task_slot = action - 1
             if task_slot >= len(unassigned_tasks):
+                invalid_actions += 1
+                continue
+            if not self._agent_can_take_action(agent_id, task_slot, drone_is_free, drone_free_masks):
                 invalid_actions += 1
                 continue
 
@@ -200,7 +216,19 @@ class EnvDroneEnv(MultiAgentEnv):
             if task_id is None:
                 invalid_actions += 1
                 continue
+            if task_id in used_task_ids:
+                invalid_actions += 1
+                continue
             assignments[agent_id] = [task_id]
+            used_task_ids.add(task_id)
+
+        repaired_actions = 0
+        if self._repair_assignments:
+            repaired_actions = self._repair_idle_assignments(
+                assignments,
+                used_task_ids,
+                obs_before,
+            )
 
         next_obs, reward, frontend_done, frontend_info = self._frontend_env.step(assignments)
         self._last_obs = next_obs
@@ -210,14 +238,14 @@ class EnvDroneEnv(MultiAgentEnv):
         total_completed = int(stats.get("total_completed", 0))
         completion_delta = total_completed - self._prev_completed
         self._prev_completed = total_completed
-        unassigned_count = self._count_unassigned(next_obs.get("unassigned_tasks", []))
-        overdue_count = self._count_overdue(next_obs.get("unassigned_tasks", []))
+        unassigned_cost = self._weighted_backlog_cost(next_obs.get("unassigned_tasks", []))
+        overdue_cost = self._weighted_overdue_cost(next_obs.get("unassigned_tasks", []))
 
         shaped = (
             self._reward_completion_bonus * completion_delta
-            - self._reward_backlog_penalty * unassigned_count
+            - self._reward_backlog_penalty * unassigned_cost
             - self._reward_invalid_action_penalty * invalid_actions
-            - self._reward_overdue_step_penalty * overdue_count
+            - self._reward_overdue_step_penalty * overdue_cost
             - self._reward_idle_penalty * idle_actions
         )
         reward = float(reward) + float(shaped)
@@ -226,11 +254,22 @@ class EnvDroneEnv(MultiAgentEnv):
         terminated = bool(hit_episode_limit or frontend_done)
         env_info = {
             "episode_limit": bool(hit_episode_limit),
+            "invalid_actions": int(invalid_actions),
+            "idle_actions": int(idle_actions),
+            "repaired_actions": int(repaired_actions),
         }
 
         if terminated:
             total_generated = int(stats.get("total_generated", 0))
             remaining = max(0, total_generated - total_completed)
+            completion_rate = (
+                total_completed / total_generated
+                if total_generated > 0 else 0.0
+            )
+            reward = float(reward) + float(self._reward_completion_rate_bonus * (completion_rate ** 2))
+            if self._reward_terminal_delay_penalty > 0 and hasattr(self._frontend_env, "get_statistics"):
+                delay_cost = self._terminal_priority_delay_cost(stats)
+                reward = float(reward) - float(self._reward_terminal_delay_penalty * delay_cost)
             if remaining > 0:
                 reward = float(reward) - float(self._reward_uncompleted_penalty * remaining)
             if isinstance(frontend_info, dict):
@@ -307,6 +346,10 @@ class EnvDroneEnv(MultiAgentEnv):
                 env_info["avg_delay_priority_2"] = float(stats.get("avg_delay_priority_2", env_info.get("avg_delay_priority_2", 0.0)))
                 env_info["avg_delay_priority_3"] = float(stats.get("avg_delay_priority_3", env_info.get("avg_delay_priority_3", 0.0)))
 
+        reward = float(reward) * self._reward_scale
+        if self._reward_clip is not None:
+            reward = float(np.clip(reward, -self._reward_clip, self._reward_clip))
+
         return float(reward), terminated, env_info
 
     def _to_action_list(self, actions):
@@ -348,6 +391,166 @@ class EnvDroneEnv(MultiAgentEnv):
             except (TypeError, ValueError):
                 continue
         return overdue
+
+    def _priority_delay_weight(self, priority):
+        try:
+            priority = int(priority)
+        except (TypeError, ValueError):
+            priority = 1
+        return self._reward_priority_delay_weights.get(priority, self._reward_priority_delay_weights[1])
+
+    def _weighted_backlog_cost(self, tasks):
+        cost = 0.0
+        for task in tasks:
+            if self._is_padded_task(task):
+                continue
+            remaining = task.get("remaining_time", self._max_remaining_time)
+            try:
+                remaining = float(remaining)
+            except (TypeError, ValueError):
+                remaining = self._max_remaining_time
+            urgency = 1.0 - float(np.clip(remaining / max(self._max_remaining_time, 1.0), 0.0, 1.0))
+            if remaining < 0:
+                urgency = 1.0
+            priority_weight = self._priority_delay_weight(task.get("priority", 1))
+            cost += priority_weight * (self._reward_urgency_backlog_base + urgency)
+        return cost
+
+    def _weighted_overdue_cost(self, tasks):
+        cost = 0.0
+        for task in tasks:
+            if self._is_padded_task(task):
+                continue
+            remaining = task.get("remaining_time", 0)
+            try:
+                remaining = float(remaining)
+            except (TypeError, ValueError):
+                continue
+            if remaining >= 0:
+                continue
+            priority_weight = self._priority_delay_weight(task.get("priority", 1))
+            severity = 1.0 + min(abs(remaining) / max(self._reward_overdue_severity_scale, 1.0), 3.0)
+            cost += priority_weight * severity
+        return cost
+
+    def _terminal_priority_delay_cost(self, stats):
+        weighted_delay = 0.0
+        total_weight = 0.0
+        for priority in (1, 2, 3):
+            weight = self._priority_delay_weight(priority)
+            delay = float(stats.get(f"avg_delay_priority_{priority}", 0.0))
+            weighted_delay += weight * delay
+            total_weight += weight
+        return weighted_delay / max(total_weight, 1.0)
+
+    def _agent_can_take_action(self, agent_id, task_slot, drone_is_free, drone_free_masks):
+        if agent_id < len(drone_is_free) and drone_is_free[agent_id]:
+            return True
+        if agent_id < len(drone_free_masks):
+            mask = drone_free_masks[agent_id]
+            if task_slot < len(mask):
+                return bool(mask[task_slot])
+        return False
+
+    def _repair_idle_assignments(self, assignments, used_task_ids, observation):
+        tasks = observation.get("unassigned_tasks", [])
+        drone_is_free = observation.get("drone_is_free", [True] * self.n_agents)
+        drone_free_masks = observation.get("drone_free_masks", [])
+        drone_positions = observation.get("drone_positions", [[0.0, 0.0]] * self.n_agents)
+        remaining_tasks = [
+            task for task in tasks
+            if not self._is_padded_task(task) and task.get("task_id") not in used_task_ids
+        ]
+        if not remaining_tasks:
+            return 0
+
+        repaired = 0
+
+        try:
+            from greedy.scheduler import greedy_action_from_observation
+            greedy_assignments = greedy_action_from_observation(observation)
+        except Exception:
+            greedy_assignments = {}
+
+        task_ids_available = {task.get("task_id") for task in remaining_tasks}
+        task_slots = {task.get("task_id"): slot for slot, task in enumerate(tasks)}
+        for agent_id, task_ids in greedy_assignments.items():
+            if agent_id in assignments:
+                continue
+            for task_id in task_ids:
+                if task_id not in task_ids_available or task_id in used_task_ids:
+                    continue
+                task_slot = task_slots.get(task_id)
+                if task_slot is None or not self._agent_can_take_action(agent_id, task_slot, drone_is_free, drone_free_masks):
+                    continue
+                assignments[agent_id] = [task_id]
+                used_task_ids.add(task_id)
+                remaining_tasks = [task for task in remaining_tasks if task.get("task_id") != task_id]
+                task_ids_available.remove(task_id)
+                repaired += 1
+                break
+
+        for agent_id in range(self.n_agents):
+            if agent_id in assignments:
+                continue
+            if not remaining_tasks:
+                break
+
+            drone_pos = drone_positions[agent_id] if agent_id < len(drone_positions) else [0.0, 0.0]
+            valid_tasks = [
+                task for task in remaining_tasks
+                if self._agent_can_take_action(
+                    agent_id,
+                    task_slots.get(task.get("task_id"), self.max_tasks),
+                    drone_is_free,
+                    drone_free_masks,
+                )
+            ]
+            if not valid_tasks:
+                continue
+            best_task = max(valid_tasks, key=lambda task: self._repair_task_score(task, drone_pos))
+            task_id = best_task.get("task_id")
+            if task_id is None:
+                continue
+            assignments[agent_id] = [task_id]
+            used_task_ids.add(task_id)
+            remaining_tasks.remove(best_task)
+            repaired += 1
+        return repaired
+
+    def _repair_task_score(self, task, drone_pos):
+        remaining = task.get("remaining_time", self._max_remaining_time)
+        try:
+            remaining = float(remaining)
+        except (TypeError, ValueError):
+            remaining = self._max_remaining_time
+        urgency = 1.0 - float(np.clip(remaining / max(self._max_remaining_time, 1.0), 0.0, 1.0))
+
+        priority_max = self._priority_max if self._priority_max > 0 else 1.0
+        priority = float(task.get("priority", 0.0)) / priority_max
+
+        source = task.get("source", [0.0, 0.0])
+        try:
+            source_distance = float(((float(source[0]) - float(drone_pos[0])) ** 2 + (float(source[1]) - float(drone_pos[1])) ** 2) ** 0.5)
+        except (TypeError, ValueError, IndexError):
+            source_distance = self._max_dist
+        source_distance = source_distance / max(self._max_dist, 1.0)
+
+        route_distance = task.get("route_distance")
+        if route_distance is None:
+            dest = task.get("destination", [0.0, 0.0])
+            try:
+                route_distance = float(((float(source[0]) - float(dest[0])) ** 2 + (float(source[1]) - float(dest[1])) ** 2) ** 0.5)
+            except (TypeError, ValueError, IndexError):
+                route_distance = self._max_dist
+        route_distance = float(route_distance) / max(self._max_dist, 1.0)
+
+        return (
+            self._repair_urgency_weight * urgency
+            + self._repair_priority_weight * priority
+            - self._repair_source_distance_weight * source_distance
+            - self._repair_route_distance_weight * route_distance
+        )
 
     def _task_vector(self, task):
         if self._is_padded_task(task):
@@ -468,13 +671,14 @@ class EnvDroneEnv(MultiAgentEnv):
         if self._last_obs is None:
             return avail
 
-        drone_is_free = self._last_obs.get("drone_is_free", [True] * self.n_agents)
-        if agent_id >= len(drone_is_free) or not drone_is_free[agent_id]:
-            return avail
-
         tasks = self._last_obs.get("unassigned_tasks", [])
+        drone_is_free = self._last_obs.get("drone_is_free", [True] * self.n_agents)
+        drone_free_masks = self._last_obs.get("drone_free_masks", [])
         for i in range(min(len(tasks), self.max_tasks)):
-            if not self._is_padded_task(tasks[i]):
+            if (
+                not self._is_padded_task(tasks[i])
+                and self._agent_can_take_action(agent_id, i, drone_is_free, drone_free_masks)
+            ):
                 avail[i + 1] = 1
         return avail
 
