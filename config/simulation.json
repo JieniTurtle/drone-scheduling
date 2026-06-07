@@ -1,17 +1,17 @@
 {
   "environment": {
-    "episode_max_steps": 2000,
-    "num_drones": 12,
+    "episode_max_steps": 1500,
+    "num_drones": 10,
     "print_route_debug": false,
     "allow_multi_task": true,
-    "max_obs_tasks": 5,
+    "max_obs_tasks": 8,
     "multi_task_max_total_weight": 5.0,
     "greedy": {
-      "max_assignments_per_step": 2,
-      "candidate_limit": 1,
-      "accept_probability": 0.75,
-      "min_battery_ratio": 0.55,
-      "max_active_drones_ratio": 0.8
+      "max_assignments_per_step": 12,
+      "candidate_limit": 8,
+      "accept_probability": 1.0,
+      "min_battery_ratio": 0.0,
+      "max_active_drones_ratio": 1.0
     },
     "reward_step": -0.01,
     "reward_priority_1": 100.0,
@@ -29,23 +29,18 @@
       "initial_task_count": 5
     },
     "realistic": {
-      "total_tasks": 70,
-      "initial_task_count": 3,
-      "peak_steps_per_task": 5,
-      "off_peak_steps_per_task": 7,
+      "total_tasks": 60,
+      "initial_task_count": 12,
+      "peak_steps_per_task": 10,
+      "off_peak_steps_per_task": 14,
       "peak_probability": 0.85,
       "cycle_length": 500,
       "interval_scale": 1.0,
       "interval_variance_ratio": 0.2,
       "hotspot": {
         "enabled": true,
-        "probability": 0.4,
-        "strategy": {
-          "p_source_hotspot": 0.4,
-          "p_both_hotspot": 0.2,
-          "p_dest_hotspot": 0.4
-        },
-        "radius": 50,
+        "probability": 0.6,
+        "radius": 80,
         "centers": [
           [
             359190.428233,
@@ -59,14 +54,22 @@
       }
     }
   },
+  "qmix_reward": {
+    "completion_bonus": 2.0,
+    "backlog_penalty": 0.08,
+    "invalid_action_penalty": 1.0,
+    "overdue_step_penalty": 0.1,
+    "idle_penalty": 0.02,
+    "uncompleted_penalty": 10.0
+  },
   "task": {
     "positions_file": "../config/positions.json",
     "weight_min": 1,
     "weight_max": 4,
     "priority_min": 1,
     "priority_max": 3,
-    "deadline_offset_min": 200,
-    "deadline_offset_max": 500,
+    "deadline_offset_min": 100,
+    "deadline_offset_max": 200,
     "warehouse_pos": [
       357600.574872369,
       3462308.772003661

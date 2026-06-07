@@ -1,10 +1,13 @@
 import json
 import math
 import random
+from pathlib import Path
 
 from config.config_loder import get_shared_config
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG_ROOT = PROJECT_ROOT / "config"
 _TASK_CFG = get_shared_config().get("task", {})
 _warehouse_pos = _TASK_CFG.get("warehouse_pos", [357600.574872369, 3462308.772003661])
 WAREHOUSE_POS = (float(_warehouse_pos[0]), float(_warehouse_pos[1]))
@@ -45,17 +48,11 @@ REALISTIC_CFG = _TASK_GEN_CFG.get("realistic", {})
 #    - 配置项: config/simulation.json 中的 "realistic.hotspot" 字段
 #    - 启用条件: hotspot.enabled = true
 #    - 核心参数:
-#      * probability: 本次任务使用热点区域的概率（默认 40%）
+#      * probability: 本次任务起点落在热点区域的概率（默认 40%）
 #      * radius: 热点区域半径，单位为米（默认 100 米）
 #      * centers: 热点中心点坐标列表（UTM 坐标）
 #
-#    - 任务生成策略（概率分布）:
-#      | 场景                     | 概率 |
-#      | 起点在热点，终点在普通区域 | 70% |
-#      | 起点和终点都在热点区域     | 20% |
-#      | 起点在普通区域，终点在热点 | 10% |
-#
-#    - 位置生成: 在热点圆形区域内使用极坐标随机生成
+#    - 位置生成: 起点在热点圆形区域内使用极坐标随机生成；终点从普通目的地中随机选择
 #
 # =============================================================================
 
@@ -126,11 +123,28 @@ class Task:
         return self.__str__()
 
 
+def _resolve_data_file(file_path):
+    path = Path(file_path)
+    if path.is_absolute():
+        return path
+
+    candidates = [
+        PROJECT_ROOT / path,
+        CONFIG_ROOT / path.name if path.parent.name == "config" else None,
+        Path(__file__).resolve().parent / path,
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.exists():
+            return candidate
+    return PROJECT_ROOT / path
+
+
 def load_destinations_from_file(file_path):
     """从文件读取配送目的地坐标列表，支持 JSON 和 CSV 格式"""
     destinations = []
+    file_path = _resolve_data_file(file_path)
     try:
-        if file_path.endswith('.json'):
+        if file_path.suffix.lower() == '.json':
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             positions = data.get("positions", [])
@@ -206,11 +220,6 @@ class RealisticModeGenerator:
         self._hotspot_prob = float(hotspot_cfg.get("probability", 0.7))
         self._hotspot_radius = float(hotspot_cfg.get("radius", 200))
         self._hotspot_centers = hotspot_cfg.get("centers", [])
-        # 热点内部策略可配置：起点在热点 / 起终都在热点 / 终点在热点
-        strategy_cfg = hotspot_cfg.get("strategy", {})
-        self._hotspot_p_source = float(strategy_cfg.get("p_source_hotspot", 0.7))
-        self._hotspot_p_both = float(strategy_cfg.get("p_both_hotspot", 0.2))
-        self._hotspot_p_dest = float(strategy_cfg.get("p_dest_hotspot", 0.1))
 
     @property
     def initial_task_count(self):
@@ -520,38 +529,16 @@ class TaskGenerator:
         在热点区域内生成起点和终点
 
         策略：
-        1. 选择一个热点中心
-        2. 70%概率：起点在热点区域，终点在普通区域
-        3. 20%概率：起点和终点都在热点区域
-        4. 10%概率：起点在普通区域，终点在热点区域
+        1. 起点在热点区域
+        2. 终点从普通目的地中随机选择
         """
         gen = self._realistic_gen
-        r = random.random()
-        # 允许配置概率和不等于1时进行归一化
-        p_source = gen._hotspot_p_source
-        p_both = gen._hotspot_p_both
-        p_dest = gen._hotspot_p_dest
-        total_p = p_source + p_both + p_dest
-        if total_p <= 0:
-            p_source, p_both, p_dest = 0.7, 0.2, 0.1
-            total_p = 1.0
-        p_source /= total_p
-        p_both /= total_p
-        # p_dest implied
-
-        if r < p_source:
-            # 热点 -> 普通
-            source = gen.generate_hotspot_position()
+        source = gen.generate_hotspot_position()
+        destination = random.choice(self.destinations)
+        retries = 0
+        while destination == source and retries < 10:
             destination = random.choice(self.destinations)
-        elif r < (p_source + p_both):
-            # 热点 -> 热点
-            source = gen.generate_hotspot_position()
-            destination = gen.generate_hotspot_position()
-        else:
-            # 普通 -> 热点
-            source = random.choice(self.destinations)
-            destination = gen.generate_hotspot_position()
-
+            retries += 1
         return (source, destination)
 
     def generate_random_tasks(self, num_tasks=5, current_time=0):

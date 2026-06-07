@@ -1,8 +1,7 @@
-"""纯贪心算法测试入口。
+"""Greedy scheduler evaluation entrypoint.
 
-用法:
-    cd frontend
-    python greedy/run_greedy.py --episodes 5 --episode-steps 1200 --csv
+Runs multiple episodes, averages the metrics, and appends the summary to
+results/compare/frontend_greedy_metrics.csv by default.
 """
 
 import argparse
@@ -16,12 +15,30 @@ FRONTEND_ROOT = PROJECT_ROOT / "frontend"
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(FRONTEND_ROOT))
 
+from config.config_loder import get_shared_config
 from environment import Environment
 from greedy.scheduler import greedy_action_from_observation
-from config.config_loder import get_shared_config
 
 
 CSV_OUTPUT = PROJECT_ROOT / "results" / "compare" / "frontend_greedy_metrics.csv"
+
+METRIC_COLUMNS = [
+    "总步数",
+    "完成任务数",
+    "生成任务数",
+    "完成率",
+    "从生成到分配等待时间",
+    "从分配到实际装载上机等待时间",
+    "从上机到送达平均时间",
+    "从生成到完成总时间平均",
+    "从生成到完成总时间最大",
+    "超时率",
+    "平均时延",
+    "优先级1平均时延",
+    "优先级2平均时延",
+    "优先级3平均时延",
+    "总能量消耗",
+]
 
 
 def _resolve_episode_steps(default_steps):
@@ -30,8 +47,36 @@ def _resolve_episode_steps(default_steps):
     return int(env_cfg.get("episode_max_steps", default_steps))
 
 
+def _to_output_metrics(stats):
+    return {
+        "总步数": float(stats.get("episode_step", 0.0)),
+        "完成任务数": float(stats.get("total_completed", 0.0)),
+        "生成任务数": float(stats.get("total_generated", 0.0)),
+        "完成率": float(stats.get("completion_rate", 0.0)),
+        "从生成到分配等待时间": float(stats.get("avg_generation_to_assignment_wait", 0.0)),
+        "从分配到实际装载上机等待时间": float(stats.get("avg_assignment_to_load_wait", 0.0)),
+        "从上机到送达平均时间": float(stats.get("avg_load_to_delivery_time", 0.0)),
+        "从生成到完成总时间平均": float(stats.get("avg_generation_to_completion_time", 0.0)),
+        "从生成到完成总时间最大": float(stats.get("max_generation_to_completion_time", 0.0)),
+        "超时率": float(stats.get("timeout_rate", 0.0)),
+        "平均时延": float(stats.get("avg_delay", 0.0)),
+        "优先级1平均时延": float(stats.get("avg_delay_priority_1", 0.0)),
+        "优先级2平均时延": float(stats.get("avg_delay_priority_2", 0.0)),
+        "优先级3平均时延": float(stats.get("avg_delay_priority_3", 0.0)),
+        "总能量消耗": float(stats.get("total_energy_consumed", 0.0)),
+    }
+
+
+def _mean_metrics(rows):
+    if not rows:
+        return {col: 0.0 for col in METRIC_COLUMNS}
+    return {
+        col: sum(float(row.get(col, 0.0)) for row in rows) / len(rows)
+        for col in METRIC_COLUMNS
+    }
+
+
 def run_one_episode(osm_path, episode_steps):
-    """运行一个贪心调度 episode，返回完整统计数据。"""
     env = Environment(str(osm_path), visualize=False, episode_max_steps=episode_steps)
     obs = env.reset()
     done = False
@@ -40,112 +85,61 @@ def run_one_episode(osm_path, episode_steps):
         obs, _, done, _ = env.step(action)
 
     stats = env.get_statistics()
-    result = {
-        "episode_step": int(env.current_time),
-        "completion_rate": float(stats.get("completion_rate", 0.0)),
-        "on_time_rate": float(stats.get("on_time_rate", 0.0)),
-        "avg_delay": float(stats.get("avg_delay", 0.0)),
-        "avg_wait_time_to_load": float(stats.get("avg_wait_time_to_load", 0.0)),
-        "avg_delivery_time": float(stats.get("avg_delivery_time", 0.0)),
-        "avg_generation_to_completion_time": float(stats.get("avg_generation_to_completion_time", 0.0)),
-        "avg_generation_time": float(stats.get("avg_generation_time", 0.0)),
-        "avg_steps_per_order": float(stats.get("avg_steps_per_order", 0.0)),
-        "total_completed": int(stats.get("total_completed", 0)),
-        "total_generated": int(stats.get("total_generated", getattr(env, "total_generated_tasks", 0))),
-        "total_energy_consumed": float(stats.get("total_energy_consumed", 0.0)),
-        "max_delivery_time": float(stats.get("max_delivery_time", 0.0)),
-    }
-    return result
+    stats["episode_step"] = int(env.current_time)
+    return stats
 
 
-def _write_csv(output_path, episode, stats):
+def _write_csv(output_path, stats):
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    header = [
-        "source", "episode", "episode_step", "completion_rate", "on_time_rate",
-        "avg_delay", "avg_wait_time_to_load", "avg_delivery_time",
-        "avg_generation_to_completion_time", "avg_generation_time",
-        "total_completed", "total_generated", "avg_steps_per_order",
-        "total_energy_consumed", "max_delivery_time",
-    ]
+    header = ",".join(METRIC_COLUMNS)
     existing_header = None
     if output_path.exists():
-        with open(output_path, "r", encoding="utf-8") as existing:
-            existing_header = existing.readline().strip()
-    need_header = existing_header != ",".join(header)
-    write_mode = "w" if need_header else "a"
-    with open(output_path, write_mode, newline="", encoding="utf-8") as f:
+        with open(output_path, "r", encoding="utf-8-sig", newline="") as f:
+            existing_header = f.readline().strip()
+
+    write_mode = "a" if existing_header == header else "w"
+    with open(output_path, write_mode, newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        if need_header:
-            writer.writerow(header)
-        writer.writerow([
-            "frontend_greedy",
-            int(episode),
-            int(stats["episode_step"]),
-            float(stats["completion_rate"]),
-            float(stats["on_time_rate"]),
-            float(stats["avg_delay"]),
-            float(stats["avg_wait_time_to_load"]),
-            float(stats["avg_delivery_time"]),
-            float(stats["avg_generation_to_completion_time"]),
-            float(stats["avg_generation_time"]),
-            int(stats["total_completed"]),
-            int(stats["total_generated"]),
-            float(stats["avg_steps_per_order"]),
-            float(stats["total_energy_consumed"]),
-            float(stats["max_delivery_time"]),
-        ])
+        if write_mode == "w":
+            writer.writerow(METRIC_COLUMNS)
+        writer.writerow([stats[col] for col in METRIC_COLUMNS])
 
 
 def main():
-    parser = argparse.ArgumentParser(description="纯贪心算法测试入口")
-    parser.add_argument("--episodes", type=int, default=5, help="运行 episode 数量")
-    parser.add_argument("--episode-steps", type=int, default=None, help="每个 episode 最大步数")
-    parser.add_argument("--osm", type=str, default="data/map/part_of_yangpu.osm", help="OSM 地图相对路径 (frontend 目录下)")
-    parser.add_argument("--csv", action="store_true", default=False, help="是否输出 CSV 文件")
+    parser = argparse.ArgumentParser(description="Run Greedy scheduler evaluation.")
+    parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to run.")
+    parser.add_argument("--episode-steps", type=int, default=None, help="Max steps per episode.")
+    parser.add_argument("--osm", type=str, default="data/map/part_of_yangpu.osm", help="OSM path relative to frontend.")
+    parser.add_argument("--no-csv", action="store_true", help="Do not write the averaged CSV summary.")
     args = parser.parse_args()
 
     episode_steps = args.episode_steps or _resolve_episode_steps(default_steps=1200)
     osm_path = FRONTEND_ROOT / args.osm
 
-    all_stats = []
+    output_rows = []
     for ep in range(args.episodes):
         stats = run_one_episode(osm_path, episode_steps)
-        all_stats.append(stats)
-        if args.csv:
-            _write_csv(CSV_OUTPUT, ep + 1, stats)
+        output = _to_output_metrics(stats)
+        output_rows.append(output)
         print(
             f"Episode {ep + 1}: "
-            f"completion={stats['completion_rate']:.4f}, "
-            f"on_time={stats['on_time_rate']:.4f}, "
-            f"avg_delay={stats['avg_delay']:.4f}, "
-            f"avg_wait={stats['avg_wait_time_to_load']:.4f}, "
-            f"avg_delivery={stats['avg_delivery_time']:.4f}, "
-            f"avg_gen_to_done={stats['avg_generation_to_completion_time']:.4f}, "
-            f"completed={stats['total_completed']}/{stats['total_generated']}, "
-            f"avg_gen_time={stats['avg_generation_time']:.4f}, "
-            f"steps={stats['episode_step']}"
+            f"完成率={output['完成率']:.4f}, "
+            f"超时率={output['超时率']:.4f}, "
+            f"平均时延={output['平均时延']:.4f}, "
+            f"从上机到送达平均时间={output['从上机到送达平均时间']:.4f}, "
+            f"完成={output['完成任务数']:.0f}/{output['生成任务数']:.0f}, "
+            f"总步数={output['总步数']:.0f}"
         )
 
-    n = max(len(all_stats), 1)
-    mean_completion = sum(s["completion_rate"] for s in all_stats) / n
-    mean_on_time = sum(s["on_time_rate"] for s in all_stats) / n
-    mean_delay = sum(s["avg_delay"] for s in all_stats) / n
-    mean_wait = sum(s["avg_wait_time_to_load"] for s in all_stats) / n
-    mean_delivery = sum(s["avg_delivery_time"] for s in all_stats) / n
-    mean_gen_to_done = sum(s["avg_generation_to_completion_time"] for s in all_stats) / n
-    mean_avg_gen_time = sum(s["avg_generation_time"] for s in all_stats) / n
+    mean_stats = _mean_metrics(output_rows)
 
     print("=" * 60)
     print("Mean Metrics")
-    print(f"completion_rate:       {mean_completion:.4f}")
-    print(f"on_time_rate:          {mean_on_time:.4f}")
-    print(f"avg_delay:             {mean_delay:.4f}")
-    print(f"avg_wait_time_to_load: {mean_wait:.4f}")
-    print(f"avg_delivery_time:     {mean_delivery:.4f}")
-    print(f"avg_gen_to_done:       {mean_gen_to_done:.4f}")
-    print(f"avg_generation_time:   {mean_avg_gen_time:.4f}")
-    if args.csv:
-        print(f"csv_file:              {CSV_OUTPUT}")
+    for col in METRIC_COLUMNS:
+        print(f"{col}: {mean_stats[col]:.4f}")
+    if not args.no_csv:
+        _write_csv(CSV_OUTPUT, mean_stats)
+        print(f"csv_file: {CSV_OUTPUT}")
     print("=" * 60)
 
 

@@ -10,15 +10,21 @@ from pathlib import Path
 
 
 SUMMARY_KEYS = [
-    "completion_rate",
-    "on_time_rate",
-    "avg_delay",
-    "avg_wait_time_to_load",
-    "avg_delivery_time",
-    "avg_gen_to_done",
-    "avg_generation_time",
-    "total_energy_consumed",
-    "total_generated_mean",
+    "总步数",
+    "完成任务数",
+    "生成任务数",
+    "完成率",
+    "从生成到分配等待时间",
+    "从分配到实际装载上机等待时间",
+    "从上机到送达平均时间",
+    "从生成到完成总时间平均",
+    "从生成到完成总时间最大",
+    "超时率",
+    "平均时延",
+    "优先级1平均时延",
+    "优先级2平均时延",
+    "优先级3平均时延",
+    "总能量消耗",
 ]
 
 
@@ -76,10 +82,31 @@ def _average_metrics(rows, columns):
 
 def _normalize_metric_names(metrics):
     normalized = dict(metrics)
-    if "avg_generation_to_completion_time" in normalized and "avg_gen_to_done" not in normalized:
-        normalized["avg_gen_to_done"] = normalized.pop("avg_generation_to_completion_time")
-    if "total_generated" in normalized and "total_generated_mean" not in normalized:
-        normalized["total_generated_mean"] = normalized.pop("total_generated")
+    aliases = {
+        "episode_step": "总步数",
+        "total_completed": "完成任务数",
+        "total_generated": "生成任务数",
+        "total_generated_mean": "生成任务数",
+        "completion_rate": "完成率",
+        "avg_generation_to_assignment_wait": "从生成到分配等待时间",
+        "avg_assignment_to_load_wait": "从分配到实际装载上机等待时间",
+        "avg_wait_time_to_load": "从分配到实际装载上机等待时间",
+        "avg_load_to_delivery_time": "从上机到送达平均时间",
+        "avg_delivery_time": "从上机到送达平均时间",
+        "avg_generation_to_completion_time": "从生成到完成总时间平均",
+        "avg_gen_to_done": "从生成到完成总时间平均",
+        "max_generation_to_completion_time": "从生成到完成总时间最大",
+        "max_delivery_time": "从生成到完成总时间最大",
+        "timeout_rate": "超时率",
+        "avg_delay": "平均时延",
+        "avg_delay_priority_1": "优先级1平均时延",
+        "avg_delay_priority_2": "优先级2平均时延",
+        "avg_delay_priority_3": "优先级3平均时延",
+        "total_energy_consumed": "总能量消耗",
+    }
+    for old_key, new_key in aliases.items():
+        if old_key in normalized and new_key not in normalized:
+            normalized[new_key] = normalized[old_key]
     return {key: normalized[key] for key in SUMMARY_KEYS if key in normalized}
 
 
@@ -208,15 +235,12 @@ def main():
 
             results.append(combined)
             print(
-                f"interval_scale={interval_scale:g}: completion_rate={combined.get('completion_rate', 0.0):.4f}, "
-                f"on_time_rate={combined.get('on_time_rate', 0.0):.4f}, "
-                f"avg_delay={combined.get('avg_delay', 0.0):.4f}, "
-                f"avg_wait_time_to_load={combined.get('avg_wait_time_to_load', 0.0):.4f}, "
-                f"avg_delivery_time={combined.get('avg_delivery_time', 0.0):.4f}, "
-                f"avg_gen_to_done={combined.get('avg_gen_to_done', 0.0):.4f}, "
-                f"avg_generation_time={combined.get('avg_generation_time', 0.0):.4f}, "
-                f"total_energy_consumed={combined.get('total_energy_consumed', 0.0):.4f}, "
-                f"total_generated(mean)={combined.get('total_generated_mean', 0.0):.1f}"
+                f"interval_scale={interval_scale:g}: 完成率={combined.get('完成率', 0.0):.4f}, "
+                f"超时率={combined.get('超时率', 0.0):.4f}, "
+                f"平均时延={combined.get('平均时延', 0.0):.4f}, "
+                f"完成任务数={combined.get('完成任务数', 0.0):.1f}, "
+                f"生成任务数={combined.get('生成任务数', 0.0):.1f}, "
+                f"总能量消耗={combined.get('总能量消耗', 0.0):.4f}"
             )
     finally:
         _write_shared_config(config_path, original_config)

@@ -74,10 +74,15 @@ class Environment:
         self.total_completed_tasks = 0
         self.total_on_time_tasks = 0
         self.total_delay = 0.0
+        self.total_generation_to_assignment_wait = 0.0
+        self.total_assignment_to_load_wait = 0.0
         self.total_wait_time = 0.0
         self.total_delivery_time = 0.0
         self.total_generation_to_completion_time = 0.0
         self.max_delivery_time = 0.0
+        self.max_generation_to_completion_time = 0.0
+        self.priority_delay_totals = {1: 0.0, 2: 0.0, 3: 0.0}
+        self.priority_delay_counts = {1: 0, 2: 0, 3: 0}
         
         # 耗电量统计
         self.total_energy_consumed = 0.0  # 总耗电量 (Wh)
@@ -127,14 +132,18 @@ class Environment:
     def _record_task_completion(self, drone_idx, assignment):
         """记录单个任务完成的统计数据"""
         completed_task = assignment['task']
-        start_time = assignment['start_time']
+        assigned_time = assignment.get('assigned_time', assignment.get('start_time', self.current_time))
+        load_time = assignment.get('load_time')
+        if load_time is None:
+            load_time = assigned_time
         completion_time = self.current_time
         generation_time = completed_task.get_generation_time()
         if generation_time is None:
-            generation_time = start_time
+            generation_time = assigned_time
 
-        wait_time = max(0, start_time - generation_time)
-        delivery_time = completion_time - start_time
+        generation_to_assignment_wait = max(0, assigned_time - generation_time)
+        assignment_to_load_wait = max(0, load_time - assigned_time)
+        delivery_time = max(0, completion_time - load_time)
         generation_to_completion_time = max(0, completion_time - generation_time)
 
         deadline = completed_task.get_deadline()
@@ -146,19 +155,33 @@ class Environment:
         is_on_time = delay <= 0
         self.total_completed_tasks += 1
         self.total_delay += float(delay)
-        self.total_wait_time += float(wait_time)
+        self.total_generation_to_assignment_wait += float(generation_to_assignment_wait)
+        self.total_assignment_to_load_wait += float(assignment_to_load_wait)
+        self.total_wait_time += float(assignment_to_load_wait)
         self.total_delivery_time += float(delivery_time)
         self.total_generation_to_completion_time += float(generation_to_completion_time)
         self.max_delivery_time = max(self.max_delivery_time, float(delivery_time))
+        self.max_generation_to_completion_time = max(
+            self.max_generation_to_completion_time,
+            float(generation_to_completion_time),
+        )
+        priority = int(completed_task.get_priority())
+        if priority in self.priority_delay_totals:
+            self.priority_delay_totals[priority] += float(delay)
+            self.priority_delay_counts[priority] += 1
         if is_on_time:
             self.total_on_time_tasks += 1
 
         self.completed_tasks.append({
             'task': completed_task,
             'generation_time': generation_time,
-            'start_time': start_time,
+            'assigned_time': assigned_time,
+            'load_time': load_time,
+            'start_time': load_time,
             'completion_time': completion_time,
-            'wait_time': wait_time,
+            'generation_to_assignment_wait': generation_to_assignment_wait,
+            'assignment_to_load_wait': assignment_to_load_wait,
+            'wait_time': assignment_to_load_wait,
             'delivery_time': delivery_time,
             'generation_to_completion_time': generation_to_completion_time,
             'delay': delay
@@ -166,7 +189,7 @@ class Environment:
 
         if PRINT_ROUTE_DEBUG:
             drone_id = self.drones[drone_idx].drone_id if drone_idx < len(self.drones) else f"drone_{drone_idx}"
-            expected_time = deadline - start_time if deadline else 0
+            expected_time = deadline - load_time if deadline else 0
             self._print_task_completion(
                 drone_id, completed_task.task_id, delivery_time,
                 expected_time, delay, is_on_time,
@@ -196,12 +219,20 @@ class Environment:
                 'total_generated': self.total_generated_tasks,
                 'on_time_rate': 0.0,
                 'avg_delay': 0.0,
+                'timeout_rate': 0.0,
+                'avg_generation_to_assignment_wait': 0.0,
+                'avg_assignment_to_load_wait': 0.0,
                 'avg_wait_time_to_load': 0.0,
+                'avg_load_to_delivery_time': 0.0,
                 'avg_delivery_time': 0.0,
                 'avg_generation_to_completion_time': 0.0,
                 'avg_steps_per_order': 0.0,
                 'avg_generation_time': avg_generation_time,
                 'max_delivery_time': 0.0,
+                'max_generation_to_completion_time': 0.0,
+                'avg_delay_priority_1': 0.0,
+                'avg_delay_priority_2': 0.0,
+                'avg_delay_priority_3': 0.0,
                 'total_wait_time': self.total_wait_time,
                 'total_generation_to_completion_time': self.total_generation_to_completion_time,
                 'total_energy_consumed': self.total_energy_consumed,
@@ -212,21 +243,38 @@ class Environment:
         avg_energy_per_task = self.total_energy_consumed / self.total_completed_tasks
         
         avg_steps_per_order = self.total_delivery_time / self.total_completed_tasks
-        avg_wait_time_to_load = self.total_wait_time / self.total_completed_tasks
+        avg_generation_to_assignment_wait = self.total_generation_to_assignment_wait / self.total_completed_tasks
+        avg_assignment_to_load_wait = self.total_assignment_to_load_wait / self.total_completed_tasks
+        avg_wait_time_to_load = avg_assignment_to_load_wait
         avg_generation_to_completion_time = self.total_generation_to_completion_time / self.total_completed_tasks
+        priority_avg_delays = {}
+        for priority in (1, 2, 3):
+            count = self.priority_delay_counts.get(priority, 0)
+            priority_avg_delays[priority] = (
+                self.priority_delay_totals.get(priority, 0.0) / count
+                if count > 0 else 0.0
+            )
 
         return {
             'completion_rate': completion_rate,
             'total_completed': self.total_completed_tasks,
             'total_generated': self.total_generated_tasks,
             'on_time_rate': self.total_on_time_tasks / self.total_completed_tasks,
+            'timeout_rate': 1.0 - (self.total_on_time_tasks / self.total_completed_tasks),
             'avg_delay': self.total_delay / self.total_completed_tasks,
+            'avg_generation_to_assignment_wait': avg_generation_to_assignment_wait,
+            'avg_assignment_to_load_wait': avg_assignment_to_load_wait,
             'avg_wait_time_to_load': avg_wait_time_to_load,
+            'avg_load_to_delivery_time': self.total_delivery_time / self.total_completed_tasks,
             'avg_delivery_time': self.total_delivery_time / self.total_completed_tasks,
             'avg_generation_to_completion_time': avg_generation_to_completion_time,
             'avg_steps_per_order': avg_steps_per_order,
             'avg_generation_time': avg_generation_time,
             'max_delivery_time': self.max_delivery_time,
+            'max_generation_to_completion_time': self.max_generation_to_completion_time,
+            'avg_delay_priority_1': priority_avg_delays[1],
+            'avg_delay_priority_2': priority_avg_delays[2],
+            'avg_delay_priority_3': priority_avg_delays[3],
             'total_wait_time': self.total_wait_time,
             'total_generation_to_completion_time': self.total_generation_to_completion_time,
             'total_energy_consumed': self.total_energy_consumed,
@@ -309,7 +357,9 @@ class Environment:
                                 drone.add_load(task_to_assign.get_weight())
                                 self.drone_assignments[drone_idx].append({
                                     'task': task_to_assign,
-                                    'start_time': self.current_time
+                                    'assigned_time': self.current_time,
+                                    'start_time': self.current_time,
+                                    'load_time': None,
                                 })
                             else:
                                 # 新任务：完整规划路线
@@ -318,7 +368,9 @@ class Environment:
                                 drone.add_load(task_to_assign.get_weight())
                                 self.drone_assignments[drone_idx] = [{
                                     'task': task_to_assign,
-                                    'start_time': self.current_time
+                                    'assigned_time': self.current_time,
+                                    'start_time': self.current_time,
+                                    'load_time': None,
                                 }]
                                 pending_source = task_to_assign.get_source()
 
@@ -361,6 +413,18 @@ class Environment:
             # 航点弹出检测
             if len(prev) > len(curr) and len(prev) > 0:
                 popped = prev[0]
+                if len(popped) >= 3 and popped[2] == 'source':
+                    source_pos = (popped[0], popped[1])
+                    if i in self.drone_assignments:
+                        assignments = self.drone_assignments[i]
+                        if isinstance(assignments, dict):
+                            assignments = [assignments]
+                        for assignment in assignments:
+                            if (
+                                assignment.get('load_time') is None
+                                and assignment['task'].get_source() == source_pos
+                            ):
+                                assignment['load_time'] = self.current_time
                 if len(popped) >= 3 and popped[2] == 'dest':
                     dest_pos = (popped[0], popped[1])
                     if i in self.drone_assignments:
@@ -413,13 +477,21 @@ class Environment:
             "total_completed": int(stats.get("total_completed", 0)),
             "total_generated": int(stats.get("total_generated", self.total_generated_tasks)),
             "on_time_rate": float(stats["on_time_rate"]),
+            "timeout_rate": float(stats.get("timeout_rate", 0.0)),
             "avg_delay": float(stats["avg_delay"]),
+            "avg_generation_to_assignment_wait": float(stats.get("avg_generation_to_assignment_wait", 0.0)),
+            "avg_assignment_to_load_wait": float(stats.get("avg_assignment_to_load_wait", 0.0)),
             "avg_wait_time_to_load": float(stats.get("avg_wait_time_to_load", 0.0)),
+            "avg_load_to_delivery_time": float(stats.get("avg_load_to_delivery_time", 0.0)),
             "avg_delivery_time": float(stats.get("avg_delivery_time", 0.0)),
             "avg_generation_to_completion_time": float(stats.get("avg_generation_to_completion_time", 0.0)),
             "avg_generation_time": float(stats.get("avg_generation_time", 0.0)),
             "avg_steps_per_order": float(stats.get("avg_steps_per_order", 0.0)),
             "max_delivery_time": float(stats.get("max_delivery_time", 0.0)),
+            "max_generation_to_completion_time": float(stats.get("max_generation_to_completion_time", 0.0)),
+            "avg_delay_priority_1": float(stats.get("avg_delay_priority_1", 0.0)),
+            "avg_delay_priority_2": float(stats.get("avg_delay_priority_2", 0.0)),
+            "avg_delay_priority_3": float(stats.get("avg_delay_priority_3", 0.0)),
             "total_energy_consumed": float(stats.get("total_energy_consumed", 0.0)),
         }
 
@@ -456,10 +528,15 @@ class Environment:
         self.total_completed_tasks = 0
         self.total_on_time_tasks = 0
         self.total_delay = 0.0
+        self.total_generation_to_assignment_wait = 0.0
+        self.total_assignment_to_load_wait = 0.0
         self.total_wait_time = 0.0
         self.total_delivery_time = 0.0
         self.total_generation_to_completion_time = 0.0
         self.max_delivery_time = 0.0
+        self.max_generation_to_completion_time = 0.0
+        self.priority_delay_totals = {1: 0.0, 2: 0.0, 3: 0.0}
+        self.priority_delay_counts = {1: 0, 2: 0, 3: 0}
 
         # 重置耗电量统计
         self.total_energy_consumed = 0.0
@@ -568,6 +645,8 @@ class Environment:
             priority = task.get_priority()
             task_id = task.task_id
             weight = task.get_weight()
+            route_distance = math.dist(source, destination)
+            source_to_warehouse = math.dist(source, WAREHOUSE_POS)
             
             # 计算剩余时间：ttlj = ddlj - now
             if deadline is not None:
@@ -581,8 +660,12 @@ class Environment:
                 'destination': [destination[0], destination[1]],
                 'remaining_time': ttlj,
                 'priority': priority,
-                'weight': weight
+                'weight': weight,
+                'route_distance': route_distance,
+                'source_to_warehouse': source_to_warehouse
             })
+
+        # 保持任务的生成顺序（FIFO），不做额外排序，以便贪心策略按先来后到选择
         
         # 3. 所有无人机的is_free掩码
         # 当 allow_multi_task 启用时：不空闲但尚未抵达取货点的 drone 仍可接同源任务
@@ -643,6 +726,15 @@ class Environment:
             for drone in self.drones
         ]
 
+        # 4b. 载重信息
+        drone_loads = [
+            {
+                'current': getattr(drone, 'current_load', 0.0),
+                'capacity': drone.carrying_capacity,
+            }
+            for drone in self.drones
+        ]
+
         # 5. 充电站信息（位置 + 充电功率），与 frontend/drone.py 实际使用的站点一致
         charging_stations_info = [
             {
@@ -664,6 +756,7 @@ class Environment:
             'drone_free_masks': drone_free_masks,
             'drone_is_free': drone_is_free,
             'drone_batteries': drone_batteries,
+            'drone_loads': drone_loads,
             'charging_station': charging_station_info,   # 向后兼容
             'charging_stations': charging_stations_info,  # 新：多站列表
         }

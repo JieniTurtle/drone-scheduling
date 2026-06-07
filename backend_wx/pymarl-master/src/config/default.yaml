@@ -9,7 +9,7 @@ env_args: {}
 # --- Task assignment options ---
 # If True, action selector will try to avoid selecting the same non-NoOp task
 # across multiple agents in the same step.
-unique_task_assignment: False
+unique_task_assignment: True
 # Index of the NoOp action in the discrete action space.
 noop_action: 0
 batch_size_run: 1 # Number of environments to run in parallel

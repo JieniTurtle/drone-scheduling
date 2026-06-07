@@ -1,2 +1,0 @@
-source,interval_scale,episodes,completion_rate,on_time_rate,avg_delay,avg_wait_time_to_load,avg_delivery_time,avg_gen_to_done,avg_generation_time,total_energy_consumed,total_generated_mean
-frontend_environment_test,1.0,1,0.7142857142857143,0.7,25.02,132.6,136.62,269.22,6.27536231884058,77759.6047639228,70.0
