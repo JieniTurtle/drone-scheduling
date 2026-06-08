@@ -76,9 +76,9 @@ def _mean_metrics(rows):
     }
 
 
-def run_one_episode(osm_path, episode_steps):
+def run_one_episode(osm_path, episode_steps, seed=None):
     env = Environment(str(osm_path), visualize=False, episode_max_steps=episode_steps)
-    obs = env.reset()
+    obs = env.reset(seed=seed)
     done = False
     while not done:
         action = greedy_action_from_observation(obs)
@@ -110,6 +110,7 @@ def main():
     parser.add_argument("--episodes", type=int, default=1, help="Number of episodes to run.")
     parser.add_argument("--episode-steps", type=int, default=None, help="Max steps per episode.")
     parser.add_argument("--osm", type=str, default="data/map/part_of_yangpu.osm", help="OSM path relative to frontend.")
+    parser.add_argument("--seed", type=int, default=100, help="Base random seed. Episode seeds are base + episode_id.")
     parser.add_argument("--no-csv", action="store_true", help="Do not write the averaged CSV summary.")
     args = parser.parse_args()
 
@@ -118,11 +119,13 @@ def main():
 
     output_rows = []
     for ep in range(args.episodes):
-        stats = run_one_episode(osm_path, episode_steps)
+        episode_seed = args.seed + ep + 1
+        stats = run_one_episode(osm_path, episode_steps, seed=episode_seed)
         output = _to_output_metrics(stats)
         output_rows.append(output)
         print(
             f"Episode {ep + 1}: "
+            f"seed={episode_seed}, "
             f"完成率={output['完成率']:.4f}, "
             f"超时率={output['超时率']:.4f}, "
             f"平均时延={output['平均时延']:.4f}, "
