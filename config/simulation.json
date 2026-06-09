@@ -75,7 +75,7 @@
     "reward_clip": 5.0
   },
   "qmix_assignment_repair": {
-    "enabled": true,
+    "enabled": false,
     "priority_weight": 2.0,
     "urgency_weight": 5.0,
     "source_distance_weight": 1.5,
