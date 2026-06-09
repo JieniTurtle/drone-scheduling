@@ -66,6 +66,11 @@ class Environment:
         self.penalty_late_rate = float(ENV_CFG.get("penalty_late_rate", -0.01))
         self.overdue_initial_penalty = float(ENV_CFG.get("overdue_initial_penalty", -10.0))
         self.overdue_step_penalty = float(ENV_CFG.get("overdue_step_penalty", -0.1))
+        self.priority_delay_penalty_weights = {
+            1: float(ENV_CFG.get("priority_delay_penalty_weight_1", 1.0)),
+            2: float(ENV_CFG.get("priority_delay_penalty_weight_2", 1.5)),
+            3: float(ENV_CFG.get("priority_delay_penalty_weight_3", 2.0)),
+        }
         self._overdue_task_ids = set()
         self.generated_task_times = []
 
@@ -195,6 +200,13 @@ class Environment:
                 expected_time, delay, is_on_time,
                 completed_task.get_priority(), completed_task.get_weight()
             )
+
+    def _priority_delay_weight(self, priority):
+        try:
+            priority = int(priority)
+        except (TypeError, ValueError):
+            priority = 1
+        return self.priority_delay_penalty_weights.get(priority, self.priority_delay_penalty_weights[1])
 
     def get_statistics(self):
         """获取当前统计指标"""
@@ -576,6 +588,9 @@ class Environment:
                 reward += self.reward_priority_2
             else:
                 reward += self.reward_priority_3
+            delay = float(completed.get('delay', 0.0))
+            if delay > 0:
+                reward += self.penalty_late_rate * delay * self._priority_delay_weight(priority)
 
         # 对未完成且已超时的任务惩罚：首次大惩罚，持续超时小惩罚
         seen_task_ids = set()
@@ -591,11 +606,12 @@ class Environment:
                 continue
             overdue = current_time - deadline
             if overdue > 0:
+                priority_weight = self._priority_delay_weight(task.get_priority())
                 if task.task_id not in self._overdue_task_ids:
-                    overdue_penalty += self.overdue_initial_penalty
+                    overdue_penalty += self.overdue_initial_penalty * priority_weight
                     self._overdue_task_ids.add(task.task_id)
                 else:
-                    overdue_penalty += self.overdue_step_penalty
+                    overdue_penalty += self.overdue_step_penalty * priority_weight
 
         for assignments in self.drone_assignments.values():
             if isinstance(assignments, dict):
@@ -610,11 +626,12 @@ class Environment:
                     continue
                 overdue = current_time - deadline
                 if overdue > 0:
+                    priority_weight = self._priority_delay_weight(task.get_priority())
                     if task.task_id not in self._overdue_task_ids:
-                        overdue_penalty += self.overdue_initial_penalty
+                        overdue_penalty += self.overdue_initial_penalty * priority_weight
                         self._overdue_task_ids.add(task.task_id)
                     else:
-                        overdue_penalty += self.overdue_step_penalty
+                        overdue_penalty += self.overdue_step_penalty * priority_weight
 
         reward += overdue_penalty
         

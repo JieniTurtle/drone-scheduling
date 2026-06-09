@@ -47,7 +47,7 @@ def _load_metrics_rows(csv_path):
 
 
 def _filter_test_rows(rows):
-    test_rows = [row for row in rows if row.get("mode") == "test"]
+    test_rows = [row for row in rows if row.get("mode") == "test" or row.get("模式") == "test"]
     return test_rows if test_rows else rows
 
 
@@ -60,7 +60,7 @@ def _mean(values):
 def _average_metrics(rows, columns):
     if not rows:
         return {}
-    ignore_cols = {"source", "episode", "t_env", "mode"}
+    ignore_cols = {"source", "episode", "t_env", "mode", "时间步", "模式"}
     metrics = {}
     for col in columns:
         if col in ignore_cols:
