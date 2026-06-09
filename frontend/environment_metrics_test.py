@@ -120,7 +120,7 @@ def _run_one_episode(Environment, greedy_action_from_observation, osm_path: Path
     previous_cwd = os.getcwd()
     os.chdir(str(FRONTEND_ROOT))
     try:
-        env = Environment(str(osm_path), visualize=False, episode_max_steps=episode_steps)
+        env = Environment(str(osm_path), visualize=True, episode_max_steps=episode_steps)
         if seed is not None:
             apply_seed(seed)
             obs = env.reset(seed=seed)

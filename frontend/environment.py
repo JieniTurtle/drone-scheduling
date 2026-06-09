@@ -457,9 +457,11 @@ class Environment:
         # 更新每个无人机之前的空闲状态
         self._prev_free_status = {i: drone.is_free for i, drone in enumerate(self.drones)}
 
+        stats = self.get_statistics()
+
         running = True
         if self.viewer:
-            running = self.viewer.render(self.drones)
+            running = self.viewer.render(self.drones, stats)
 
         done_by_horizon = self.current_time >= self.episode_max_steps
         done_by_exhaustion = (
@@ -469,7 +471,6 @@ class Environment:
             and all(drone.is_free for drone in self.drones)
         )
         done = bool(done_by_horizon or done_by_exhaustion or (not running))
-        stats = self.get_statistics()
         info = {
             "episode_limit": bool(done_by_horizon),
             "episode_step": int(self.current_time),
