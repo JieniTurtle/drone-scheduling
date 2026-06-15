@@ -86,7 +86,9 @@ class PSOOptimizer:
                  battery_consumption_base: float = 0.5,
                  battery_load_penalty_factor: float = 0.3,
                  battery_low_threshold: float = 0.2,
-                 env_step_seconds: float = 0.1):
+                 env_step_seconds: float = 0.1,
+                 warm_start: bool = True,
+                 warm_start_seeds: int = 3):
         """
         初始化PSO调度器
         :param num_particles: 粒子数量
@@ -123,6 +125,12 @@ class PSOOptimizer:
         # 时间单位换算：fitness 内累计的"时间"必须与 deadline / current_time 同为
         # env-step；drone 速度以"米/秒"给出，env-step 长度 = env_step_seconds 秒
         self.env_step_seconds = env_step_seconds
+
+        # Warm-start（启发式播种）：用批量贪心解作为部分粒子的起点 + 初始全局最优，
+        # 加速收敛并保证 PSO 结果不劣于贪心。warm_start_seeds = 播种粒子数
+        # （1 个精确贪心 + 其余在其邻域加噪），其余粒子保持随机以维持多样性。
+        self.warm_start = warm_start
+        self.warm_start_seeds = max(0, int(warm_start_seeds))
 
         # 设置随机数种子
         if seed is not None:
@@ -172,7 +180,319 @@ class PSOOptimizer:
         else:
             load_factor = (current_load / carrying_capacity) * self.battery_load_penalty_factor
         return distance * self.battery_consumption_base * (1.0 + load_factor)
-    
+
+    # ----------- Warm-start：贪心解播种 -----------
+
+    def _greedy_assignment(self,
+                           drones_info: List[Dict],
+                           tasks_info: List[Dict]) -> np.ndarray:
+        """
+        批量贪心分配（与 PSO 子问题一致）：把 tasks 逐个分给"就近 origin 且不超载"
+        的无人机，返回长度 num_tasks 的 assignment 向量（值为 drone 下标）。
+
+        说明：
+          - 无人机起点 = drones_info[i]['position']（外层已设为队尾任务目的地或当前机位）；
+          - 任务按 priority 降序处理，与 evaluate_fitness 内部"高优先级先执行"的口径一致；
+          - 选择代价 = 从该机当前模拟位置到任务取货点的欧氏距离；
+          - 容量约束：优先选还装得下的机；若全部超载则退而求其次选最近的（与
+            evaluate_fitness 的"超载返仓"建模一致，仍是合法分配）。
+        """
+        num_drones = len(drones_info)
+        num_tasks = len(tasks_info)
+        assignment = np.zeros(num_tasks, dtype=int)
+
+        # 每架无人机的滚动状态：模拟当前位置 + 已装载重
+        cur_pos = [tuple(d['position']) for d in drones_info]
+        cur_load = [0.0 for _ in range(num_drones)]
+        capacities = [float(d.get('capacity', 5)) for d in drones_info]
+
+        order = sorted(range(num_tasks),
+                       key=lambda idx: tasks_info[idx].get('priority', 1),
+                       reverse=True)
+
+        for task_idx in order:
+            task = tasks_info[task_idx]
+            source = tuple(task['source'])
+            weight = float(task.get('weight', 0.0))
+
+            best_fit = None      # 装得下的最近机
+            best_fit_d = float('inf')
+            best_any = 0         # 全局最近机（兜底）
+            best_any_d = float('inf')
+
+            for i in range(num_drones):
+                dist = self.euclidean_distance(cur_pos[i], source)
+                if dist < best_any_d:
+                    best_any_d = dist
+                    best_any = i
+                if cur_load[i] + weight <= capacities[i] and dist < best_fit_d:
+                    best_fit_d = dist
+                    best_fit = i
+
+            chosen = best_fit if best_fit is not None else best_any
+            assignment[task_idx] = chosen
+
+            # 更新被选中无人机的模拟状态：装货 → 飞到目的地卸货
+            if best_fit is not None:
+                cur_load[chosen] += weight
+            else:
+                # 超载场景：evaluate_fitness 会模拟返仓卸货，这里同步把载重清零再装新货
+                cur_load[chosen] = weight
+            cur_pos[chosen] = tuple(task['destination'])
+
+        return assignment
+
+    def _assignment_to_position(self,
+                                assignment: np.ndarray,
+                                num_tasks: int,
+                                num_drones: int,
+                                noise: float = 0.0) -> np.ndarray:
+        """
+        把离散 assignment 向量编码成偏好矩阵：被选中的 drone 列拉到 +pos_max，
+        其余列设为较低的负值，使 argmax 还原出该 assignment。
+        noise > 0 时在矩阵上叠加高斯噪声，生成贪心解的"邻域"粒子（保留多样性）。
+        """
+        position = np.full((num_tasks, num_drones), -self.pos_max, dtype=float)
+        position[np.arange(num_tasks), assignment] = self.pos_max
+        if noise > 0:
+            position = position + np.random.normal(0.0, noise, position.shape)
+        return np.clip(position, -self.pos_max, self.pos_max)
+
+    def _pd_nearest_neighbor(self, start_pos, bundle: List[Dict]) -> List[Dict]:
+        """
+        带前后序约束的最近邻启发，生成 PD-TSP 初始路径。
+
+        候选集合在每一步动态构成：尚未取货任务的取货点 ∪ 已取货但未送达任务的
+        送货点；每次贪心选取距当前位置最近的候选航点。O((2k)^2)。
+        """
+        n = len(bundle)
+        picked = [False] * n
+        delivered = [False] * n
+        route: List[Dict] = []
+        cur = tuple(start_pos)
+
+        for _ in range(2 * n):
+            candidates = []  # (kind, task_idx, pos)
+            for i in range(n):
+                if not picked[i]:
+                    candidates.append(('pickup', i, tuple(bundle[i]['source'])))
+                elif not delivered[i]:
+                    candidates.append(('delivery', i, tuple(bundle[i]['destination'])))
+
+            kind, idx, pos = min(
+                candidates, key=lambda c: self.euclidean_distance(cur, c[2]))
+            route.append({
+                'task_idx': idx,
+                'kind': kind,
+                'pos': pos,
+                'task_id': bundle[idx].get('task_id'),
+            })
+            if kind == 'pickup':
+                picked[idx] = True
+            else:
+                delivered[idx] = True
+            cur = pos
+
+        return route
+
+    def _pd_route_valid(self, route: List[Dict]) -> bool:
+        """检验路径是否满足前后序约束：每个任务的取货必须出现在其送货之前。"""
+        seen_pickup = set()
+        for wp in route:
+            if wp['kind'] == 'pickup':
+                seen_pickup.add(wp['task_idx'])
+            else:  # delivery
+                if wp['task_idx'] not in seen_pickup:
+                    return False
+        return True
+
+    def _pd_route_distance(self, start_pos, route: List[Dict]) -> float:
+        """从 start_pos 出发，依次访问 route 中各航点的总飞行距离。"""
+        total = 0.0
+        cur = tuple(start_pos)
+        for wp in route:
+            total += self.euclidean_distance(cur, wp['pos'])
+            cur = wp['pos']
+        return total
+
+    def _pd_two_opt(self, start_pos, route: List[Dict]) -> Tuple[List[Dict], float]:
+        """
+        带前后序约束的 2-opt 局部搜索：反复尝试翻转子区间 [i, j]，仅接受
+        "仍满足前后序约束且总距离更短"的翻转，直到无可改进为止。
+        """
+        best = list(route)
+        best_dist = self._pd_route_distance(start_pos, best)
+        improved = True
+        while improved:
+            improved = False
+            n = len(best)
+            for i in range(n - 1):
+                for j in range(i + 1, n):
+                    candidate = best[:i] + best[i:j + 1][::-1] + best[j + 1:]
+                    if not self._pd_route_valid(candidate):
+                        continue
+                    d = self._pd_route_distance(start_pos, candidate)
+                    if d < best_dist - 1e-9:
+                        best = candidate
+                        best_dist = d
+                        improved = True
+        return best, best_dist
+
+    def _pd_route_arrival_times(self, start_pos, route: List[Dict],
+                                ready_time: float) -> List[float]:
+        """计算到达 route 中每个航点的时刻（env-step），从 ready_time 起算。"""
+        times = []
+        cur = tuple(start_pos)
+        t = float(ready_time)
+        for wp in route:
+            t += self.calculate_travel_time(self.euclidean_distance(cur, wp['pos']))
+            times.append(t)
+            cur = wp['pos']
+        return times
+
+    def _pd_deadline_adjust(self, start_pos, route: List[Dict],
+                            bundle: List[Dict], ready_time: float) -> List[Dict]:
+        """
+        deadline 前插调整：若某任务的送货航点预计超期，将其送货点前移到紧挨自身
+        取货点之后的位置（仍满足前后序约束），以少量额外距离换取准时率。
+        从最严重超期的任务开始处理。
+        """
+        route = list(route)
+        times = self._pd_route_arrival_times(start_pos, route, ready_time)
+
+        late = []  # (lateness, task_idx)
+        for k, wp in enumerate(route):
+            if wp['kind'] != 'delivery':
+                continue
+            ddl = bundle[wp['task_idx']].get('deadline', float('inf'))
+            if ddl != float('inf') and times[k] > ddl:
+                late.append((times[k] - ddl, wp['task_idx']))
+
+        if not late:
+            return route
+
+        late.sort(reverse=True)  # 超期最严重者优先调整
+        for _, task_idx in late:
+            del_pos = next(i for i, wp in enumerate(route)
+                           if wp['kind'] == 'delivery' and wp['task_idx'] == task_idx)
+            wp = route.pop(del_pos)
+            pick_pos = next(i for i, w in enumerate(route)
+                            if w['kind'] == 'pickup' and w['task_idx'] == task_idx)
+            route.insert(pick_pos + 1, wp)
+
+        return route
+
+    def plan_pickup_delivery_route(self, start_pos, bundle: List[Dict],
+                                   ready_time: float = 0.0,
+                                   deadline_aware: bool = True) -> List[Dict]:
+        """
+        :param start_pos: 无人机起点（清完已承诺工作后的落点）
+        :param bundle: 任务列表，每项含 'source' / 'destination' / 'task_id' /
+                       'weight' / 'deadline'（可选）
+        :param ready_time: 无人机就绪时刻（env-step），用于 deadline 调整
+        :param deadline_aware: 是否在 2-opt 后执行 deadline 前插调整
+        :return: 航点访问序列 List[{'task_idx','kind','pos','task_id'}]，
+                 取货与送货自由交错且满足前后序约束
+        """
+        if not bundle:
+            return []
+        route = self._pd_nearest_neighbor(start_pos, bundle)
+        route, _ = self._pd_two_opt(start_pos, route)
+        if deadline_aware:
+            route = self._pd_deadline_adjust(start_pos, route, bundle, ready_time)
+        return route
+
+    def simulate_pd_route(self,
+                          start_pos,
+                          route: List[Dict],
+                          bundle: List[Dict],
+                          ready_time: float,
+                          battery: float,
+                          battery_capacity: float,
+                          drone_capacity: float,
+                          charging_stations: Optional[List[Dict]] = None
+                          ) -> Dict[str, float]:
+        """
+        沿 PD-TSP 路径做时间/能耗仿真，给出该路径的指标，可供
+        evaluate_fitness 在"多货物携带"模式下替换原单任务仿真使用。
+
+        与 evaluate_fitness 的物理口径一致：飞行耗时按 env-step 累计，耗电按
+        consume_battery 公式（载重越大单位耗电越高），电量低于阈值时绕行最近
+        充电站补满。返回每任务完成时刻、延迟、准时数与总能耗。
+
+        :return: {'on_time_count', 'total_delay', 'total_energy',
+                  'completion_times'(dict: task_idx→完成时刻),
+                  'makespan'(最后一个航点的时刻)}
+
+        由于前端部分不支持不同起点取送分组，因此该部分逻辑在pso调度器中仅实现，不接入
+        """
+        charging_stations = charging_stations or []
+        cur_pos = tuple(start_pos)
+        t = float(ready_time)
+        load = 0.0
+        cur_battery = float(battery)
+
+        on_time_count = 0
+        total_delay = 0.0
+        total_energy = 0.0
+        completion_times: Dict[int, float] = {}
+
+        for wp in route:
+            target = wp['pos']
+
+            # 电量不足 → 先绕行最近充电站补满（与 evaluate_fitness 同口径）
+            if (battery_capacity > 0
+                    and cur_battery / battery_capacity < self.battery_low_threshold
+                    and charging_stations):
+                nearest = min(charging_stations,
+                              key=lambda s: self.euclidean_distance(
+                                  cur_pos, tuple(s['position'])))
+                station_pos = tuple(nearest['position'])
+                charging_power = float(nearest.get('charging_power', 50.0))
+                dist_to_station = self.euclidean_distance(cur_pos, station_pos)
+                consumed = self._battery_consumption(
+                    dist_to_station, load, drone_capacity)
+                cur_battery = max(0.0, cur_battery - consumed)
+                total_energy += consumed
+                t += self.calculate_travel_time(dist_to_station)
+                cur_pos = station_pos
+                charge_rate_per_step = charging_power * self.env_step_seconds
+                if charge_rate_per_step > 0:
+                    t += (battery_capacity - cur_battery) / charge_rate_per_step
+                cur_battery = battery_capacity
+
+            # 飞往航点
+            dist = self.euclidean_distance(cur_pos, target)
+            consumed = self._battery_consumption(dist, load, drone_capacity)
+            cur_battery = max(0.0, cur_battery - consumed)
+            total_energy += consumed
+            t += self.calculate_travel_time(dist)
+            cur_pos = target
+
+            # 到达：取货 → 增载；送货 → 减载并记录完成时刻
+            task = bundle[wp['task_idx']]
+            if wp['kind'] == 'pickup':
+                load += float(task.get('weight', 0.0))
+            else:
+                load -= float(task.get('weight', 0.0))
+                completion_times[wp['task_idx']] = t
+                deadline = task.get('deadline', float('inf'))
+                if deadline is not None and deadline != float('inf'):
+                    delay = max(0.0, t - deadline)
+                    total_delay += delay
+                    if delay == 0:
+                        on_time_count += 1
+                else:
+                    on_time_count += 1
+
+        return {
+            'on_time_count': on_time_count,
+            'total_delay': total_delay,
+            'total_energy': total_energy,
+            'completion_times': completion_times,
+            'makespan': t,
+        }
+
     def evaluate_fitness(self,
                         position: np.ndarray,
                         drones_info: List[Dict],
@@ -220,7 +540,18 @@ class PSOOptimizer:
 
             current_pos = drone_pos
             current_load = 0
-            accumulated_time = current_time
+            # 从该机的"就绪时刻"起算，而非 current_time：忙碌机要先清完已承诺的工作
+            # （正在执行的 bundle + 队列）才能开始新任务。修复"假设所有机立即可用"的 bug。
+            accumulated_time = drone_info.get('ready_time', current_time)
+
+            # 若无人机当前正在充电站充电（frontend drone.py 的自动充电逻辑已触发）：
+            # 不需要再模拟飞往充电站的绕路，只需等待剩余充电时间结束后再执行任务。
+            if drone_info.get('is_charging', False):
+                est_power = drone_info.get('est_charging_power', 50.0)
+                charge_rate_per_step = est_power * self.env_step_seconds
+                if charge_rate_per_step > 0 and battery_capacity > current_battery:
+                    accumulated_time += (battery_capacity - current_battery) / charge_rate_per_step
+                current_battery = battery_capacity
 
             # 按优先级排序任务（高优先级优先执行）
             sorted_tasks = sorted(task_indices,
@@ -231,8 +562,9 @@ class PSOOptimizer:
                 task = tasks_info[task_idx]
                 task_weight = task['weight']
 
-                # 任务开始前：若电量低于阈值，先去最近的充电站补电（与 drone.py 中
-                # 任务结束后判断 is_low_battery → 飞往最近充电站的逻辑一致）
+                # 任务开始前：若电量低于阈值，先去最近的充电站补电。
+                # 与 frontend/drone.py 一致：任务完成后 is_low_battery() → 飞往最近站充电；
+                # 此处在 fitness 仿真中提前预测该行为对完成时间的影响。
                 if (battery_capacity > 0
                         and current_battery / battery_capacity < self.battery_low_threshold
                         and charging_stations):
@@ -372,7 +704,29 @@ class PSOOptimizer:
         self.global_best_position = None
         self.global_best_fitness = float('-inf')
         self.fitness_history = []
-        
+
+        # Warm-start：用批量贪心解播种部分粒子，并以贪心解初始化全局最优。
+        # 这样 PSO 第一代起点就 ≥ 贪心，且 gbest 只会被更优解替换 → 返回解不劣于贪心。
+        if self.warm_start and self.warm_start_seeds > 0:
+            greedy_assignment = self._greedy_assignment(drones_info, tasks_info)
+            greedy_position = self._assignment_to_position(
+                greedy_assignment, num_tasks, num_drones)
+
+            # 播种粒子：第 0 个为精确贪心解，其余在其邻域加噪（保留多样性）
+            n_seed = min(self.warm_start_seeds, self.num_particles)
+            for k in range(n_seed):
+                noise = 0.0 if k == 0 else 0.3 * self.pos_max
+                seeded = self._assignment_to_position(
+                    greedy_assignment, num_tasks, num_drones, noise=noise)
+                self.particles[k].position = seeded
+                self.particles[k].best_position = seeded.copy()
+
+            # 用精确贪心解初始化全局最优（拿到"≥ 贪心"的保证）
+            greedy_fitness, _ = self.evaluate_fitness(
+                greedy_position, drones_info, tasks_info, current_time)
+            self.global_best_position = greedy_position.copy()
+            self.global_best_fitness = greedy_fitness
+
         # 迭代优化
         for iteration in range(self.max_iterations):
             for particle in self.particles:
@@ -480,6 +834,10 @@ class PSOScheduler:
         self.buffer_size_threshold = dc['buffer_size_threshold']
         self.emergency_ttl = dc['emergency_ttl']
         self.buffer_timeout = dc['buffer_timeout']
+        # 空闲机即时抽取 buffer：每步让"空闲+空队列"的无人机就近抓 buffer 任务，
+        # 消除"空闲机干等 flush"的分配延迟；只有竞争（待分配 > 空闲机）时才留给 PSO。
+        # 设 false 退回纯双通道行为（用于 A/B 对比）。
+        self.eager_idle_dispatch = bool(dc.get('eager_idle_dispatch', True))
 
         pso_cfg = self.config['pso']
         self.pso_num_particles = pso_cfg['num_particles']
@@ -490,6 +848,9 @@ class PSOScheduler:
         # 方案 A 偏好矩阵编码新增参数（向后兼容旧 config 缺失的情况）
         self.pso_v_max = pso_cfg.get('v_max', 4.0)
         self.pso_pos_max = pso_cfg.get('pos_max', 5.0)
+        # Warm-start：用贪心解播种部分粒子（默认开启；设 false 退回纯随机初始化）
+        self.pso_warm_start = bool(pso_cfg.get('warm_start', True))
+        self.pso_warm_start_seeds = int(pso_cfg.get('warm_start_seeds', 3))
 
         self.fitness_weights = dict(self.config['fitness_weights'])
         self.greedy_weights = dict(self.config['dynamic_greedy'])
@@ -497,6 +858,9 @@ class PSOScheduler:
         # frontend Drone.update() 默认 time_step=0.1；fitness 中所有"时间"必须按
         # env-step 累计才能与 deadline / current_time 同口径
         self.env_step_seconds = float(self.config['drone'].get('time_step', 0.1))
+        self.drone_speed = float(self.config['drone'].get('speed', 200.0))
+        # 1 个 env-step 内飞行的米数，用于把距离换算成 env-step（与 fitness 同口径）
+        self._meters_per_step = max(1e-9, self.drone_speed * self.env_step_seconds)
 
         # 电量参数（与 frontend/drone.py 中常量保持同名同义；缺省值即 drone.py 的默认值）
         battery_cfg = self.config.get('battery', {})
@@ -519,11 +883,15 @@ class PSOScheduler:
         self.known_task_ids: set = set()
         self.prev_is_free: List[bool] = [True] * num_drones
         self.active_task_ids: Dict[int, str] = {}
+        # 每架机当前正在执行的任务包（同源 bundle）；用于 ready_time 估计忙碌机何时空闲
+        self.active_tasks: Dict[int, List[Dict]] = {}
 
         # 事件统计
         self.stats = {
             'immediate_assign': 0,
             'buffered': 0,
+            'buffer_drain': 0,
+            'bundled': 0,        # 同源合并：一次 action 多送达的额外任务数
             'flush_size': 0,
             'flush_emergency': 0,
             'flush_timeout': 0,
@@ -543,9 +911,11 @@ class PSOScheduler:
         """
         is_free = self._extract_is_free(observation)
 
-        # 1. 新任务检测与处理
+        # 1. 新任务检测与处理（跳过 environment._obs() 插入的 padding 占位任务）
         for task in observation.get('unassigned_tasks', []):
             tid = task['task_id']
+            if str(tid).startswith('__pad_'):
+                continue
             if tid in self.known_task_ids:
                 continue
             self.known_task_ids.add(tid)
@@ -555,22 +925,83 @@ class PSOScheduler:
         for i in range(self.num_drones):
             if not self.prev_is_free[i] and is_free[i]:
                 self.active_task_ids.pop(i, None)
+                self.active_tasks.pop(i, None)
                 self._on_drone_freed(i, observation, current_time)
 
-        # 3. buffer flush 检查
+        # 3. 空闲机即时抽取 buffer（消除空闲机干等 flush 的分配延迟）
+        if self.eager_idle_dispatch:
+            self._drain_buffer_to_idle(observation, is_free, current_time)
+
+        # 4. buffer flush 检查（仅处理抽取后仍有竞争的剩余任务）
         self._maybe_flush_buffer(observation, current_time)
 
-        # 4. 派发：空闲 + 无活动任务 + 有队列 → 派发队头
+        # 5. 派发：空闲 + 无活动任务 + 有队列 → 派发队头，并同源 bundle
         action: Dict[int, List[str]] = {}
         for i in range(self.num_drones):
             if is_free[i] and i not in self.active_task_ids and self.drone_queues[i]:
-                next_task = self.drone_queues[i].pop(0)
-                action[i] = [next_task['task_id']]
-                self.active_task_ids[i] = next_task['task_id']
+                bundle = self._pop_same_source_bundle(i)
+                action[i] = [t['task_id'] for t in bundle]
+                # active_task_ids 仅作"该机已占用"标记（清除逻辑不看具体值）；
+                # active_tasks 保存整个 bundle，供 ready_time 估计忙碌机何时空闲
+                self.active_task_ids[i] = bundle[0]['task_id']
+                self.active_tasks[i] = bundle
                 self.stats['dispatches'] += 1
+                if len(bundle) > 1:
+                    self.stats['bundled'] += len(bundle) - 1
 
         self.prev_is_free = is_free
         return action
+
+    def _pop_same_source_bundle(self, drone_idx: int) -> List[Dict]:
+        """
+        从 drone_idx 的队列弹出队头任务，并把队列中与队头**同源**、且累计载重不超容量的
+        任务一并打包（前端只支持同源合并：一次取货、多点配送）。
+        返回打包的任务列表（至少含队头一个）。
+        """
+        queue = self.drone_queues[drone_idx]
+        head = queue.pop(0)
+        bundle = [head]
+        total_weight = float(head.get('weight', 0.0))
+        head_source = tuple(head['source'])
+
+        remaining = []
+        for t in queue:
+            t_weight = float(t.get('weight', 0.0))
+            if (tuple(t['source']) == head_source
+                    and total_weight + t_weight <= self.drone_capacity):
+                bundle.append(t)
+                total_weight += t_weight
+            else:
+                remaining.append(t)
+        self.drone_queues[drone_idx] = remaining
+        return bundle
+
+    def _estimate_ready(self, drone_idx, actual_pos, current_time):
+        """
+        估计无人机 drone_idx 清完"已承诺工作"后的落点(origin)与时刻(ready_time, env-step)。
+        已承诺工作 = 正在执行的 bundle(active_tasks) + 队列中尚未派发的任务(drone_queues)。
+        让 fitness 知道忙碌机要晚些才空闲，避免把新任务堆到其实正忙的机上。
+        """
+        pos = tuple(actual_pos)
+        t = float(current_time)
+
+        def travel_steps(a, b):
+            return self._dist(a, b) / self._meters_per_step
+
+        # 1) 正在执行的 bundle：近似为依次飞往各任务目的地（取货点视为已到/在途）
+        for task in self.active_tasks.get(drone_idx, []):
+            dest = tuple(task['destination'])
+            t += travel_steps(pos, dest)
+            pos = dest
+
+        # 2) 队列中尚未派发的任务：依次 取货点 → 目的地
+        for task in self.drone_queues[drone_idx]:
+            src = tuple(task['source'])
+            dest = tuple(task['destination'])
+            t += travel_steps(pos, src) + travel_steps(src, dest)
+            pos = dest
+
+        return pos, t
 
     def get_stats(self) -> Dict[str, int]:
         return dict(self.stats)
@@ -600,6 +1031,59 @@ class PSOScheduler:
             self.pending_buffer.append(task)
             self.buffer_entry_time[task['task_id']] = current_time
             self.stats['buffered'] += 1
+
+    def _drain_buffer_to_idle(self, observation, is_free, current_time):
+        """
+        每步把 buffer 里的任务就近派给当前空闲（free + 无活动任务 + 空队列）的无人机，
+        当步即可被 dispatch。这样空闲机不必干等 PSO flush，分配延迟接近 greedy。
+
+        只在"空闲机充足"时清空 buffer；当待分配任务多于空闲机（真竞争）时，多出来的
+        任务仍留在 buffer 交给 PSO 批量优化（_maybe_flush_buffer）。
+        """
+        if not self.pending_buffer:
+            return
+
+        drone_positions = observation['drone_positions']
+        idle = [i for i in range(self.num_drones)
+                if is_free[i]
+                and i not in self.active_task_ids
+                and len(self.drone_queues[i]) == 0]
+
+        # 贪心匹配：每个空闲机就近抓一个 anchor 任务，并把 buffer 中与其同源、容量内的
+        # 任务一并聚拢到同一架机的队列（供派发时同源 bundle，一次取货多点配送）
+        for i in idle:
+            if not self.pending_buffer:
+                break
+            drone_pos = tuple(drone_positions[i])
+            anchor = min(self.pending_buffer,
+                         key=lambda t: self._dist(drone_pos, tuple(t['source'])))
+            grabbed = self._take_same_source_from_buffer(anchor)
+            self.drone_queues[i].extend(grabbed)
+            self.stats['buffer_drain'] += len(grabbed)
+            if self.verbose:
+                ids = [t['task_id'] for t in grabbed]
+                print(f"[PSOScheduler] 空闲机聚拢 {ids} → drone_{i}（同源就近）")
+
+    def _take_same_source_from_buffer(self, anchor: Dict) -> List[Dict]:
+        """
+        从 pending_buffer 取出 anchor 及其同源、累计载重不超容量的任务（一并移出 buffer）。
+        返回取出的任务列表（至少含 anchor）。
+        """
+        anchor_source = tuple(anchor['source'])
+        taken = [anchor]
+        total_weight = float(anchor.get('weight', 0.0))
+        self.pending_buffer.remove(anchor)
+        self.buffer_entry_time.pop(anchor['task_id'], None)
+
+        for t in list(self.pending_buffer):
+            t_weight = float(t.get('weight', 0.0))
+            if (tuple(t['source']) == anchor_source
+                    and total_weight + t_weight <= self.drone_capacity):
+                taken.append(t)
+                total_weight += t_weight
+                self.pending_buffer.remove(t)
+                self.buffer_entry_time.pop(t['task_id'], None)
+        return taken
 
     def _on_drone_freed(self, drone_idx, observation, current_time):
         queue = self.drone_queues[drone_idx]
@@ -660,28 +1144,45 @@ class PSOScheduler:
         # 电量信息（每机一份）
         battery_obs = observation.get('drone_batteries')
 
-        # 每架无人机的 PSO 起点 = 已有队尾任务的目的地（无队列则用当前机位）
+        # 每架无人机的 PSO 起点与就绪时间：
+        #   origin     = 它清完"已承诺工作"（正在执行的 bundle + 队列任务）后所处的位置
+        #   ready_time = 它清完这些工作、可以开始执行新 buffer 任务的时刻（env-step）
+        # 修复原 bug：之前 origin 取队尾目的地、但 fitness 里 accumulated_time 从 current_time
+        # 起算，等于假设所有机此刻立即可用 → PSO 把任务堆到其实正忙的机上。
         drones_info = []
         for i in range(self.num_drones):
-            if self.drone_queues[i]:
-                origin = tuple(self.drone_queues[i][-1]['destination'])
-            else:
-                origin = tuple(observation['drone_positions'][i])
+            actual_pos = tuple(observation['drone_positions'][i])
+            origin, ready_time = self._estimate_ready(i, actual_pos, current_time)
 
             if battery_obs is not None and i < len(battery_obs):
                 bcap = float(battery_obs[i].get('capacity', self.battery_capacity))
                 bcur = float(battery_obs[i].get('current', bcap))
+                is_charging = bool(battery_obs[i].get('is_charging', False))
             else:
                 bcap = self.battery_capacity
                 bcur = bcap
+                is_charging = False
+
+            # 若无人机正在充电，估算其充电站的功率（取距当前机位最近的站）
+            if is_charging and stations_info:
+                nearest_st = min(
+                    stations_info,
+                    key=lambda s: self._dist(actual_pos, tuple(s['position']))
+                )
+                est_charging_power = float(nearest_st.get('charging_power', 50.0))
+            else:
+                est_charging_power = float(stations_info[0]['charging_power']) if stations_info else 50.0
 
             drones_info.append({
                 'index': i,
                 'position': origin,
+                'ready_time': ready_time,
                 'capacity': self.drone_capacity,
-                'home_position': tuple(observation['drone_positions'][i]),
+                'home_position': actual_pos,
                 'battery_capacity': bcap,
                 'battery': bcur,
+                'is_charging': is_charging,
+                'est_charging_power': est_charging_power,
                 'charging_stations': stations_info,
             })
 
@@ -708,6 +1209,8 @@ class PSOScheduler:
             battery_load_penalty_factor=self.battery_load_penalty_factor,
             battery_low_threshold=self.battery_low_threshold,
             env_step_seconds=self.env_step_seconds,
+            warm_start=self.pso_warm_start,
+            warm_start_seeds=self.pso_warm_start_seeds,
         )
         assignments, _ = optimizer.optimize(
             drones_info, tasks_info, current_time=current_time, verbose=False
