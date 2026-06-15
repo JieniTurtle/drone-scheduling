@@ -100,12 +100,13 @@ class Environment:
         self.total_generated_tasks = len(new_tasks)
         self.generated_task_times = [t.get_generation_time() for t in new_tasks]
         print(f"Generated {len(new_tasks)} tasks:")
-        for task in new_tasks:
-            print(f"  {task}")
+        # for task in new_tasks:
+        #     print(f"  {task}")
 
         self.viewer = None
         if visualize:
             self.viewer = OptimizedMapViewer('data/map/part_of_yangpu.osm')
+            self.viewer.set_on_add_drone(self.add_drone)
 
         self._episode_seed = None
 
@@ -117,8 +118,17 @@ class Environment:
 
     def get_high_buildings(self):
         return self.high_buildings
-    
-    def _print_task_completion(self, drone_id, task_id, delivery_time, expected_time, 
+
+    def add_drone(self):
+        """向环境中添加一架新无人机（从仓库出发）"""
+        new_idx = len(self.drones)
+        new_drone = Drone(WAREHOUSE_POS[0], WAREHOUSE_POS[1],
+                          drone_id=f"drone_{new_idx}")
+        self.drones.append(new_drone)
+        self._prev_free_status[new_idx] = True
+        print(f"[Environment] 添加无人机: drone_{new_idx} (当前共 {len(self.drones)} 架)")
+
+    def _print_task_completion(self, drone_id, task_id, delivery_time, expected_time,
                                delay, is_on_time, priority, weight):
         """打印任务完成信息"""
         status = "✓ 准时" if is_on_time else "✗ 延迟"

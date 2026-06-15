@@ -9,7 +9,7 @@ from drone import Drone
 
 def load_map_data(osm_file_path):
     """加载地图数据"""
-    print("Loading map data...")
+    # print("Loading map data...")
     # 读取路网 relations
     graph = ox.graph_from_xml(osm_file_path)
     # 将经纬度坐标投影为米制坐标
@@ -75,8 +75,8 @@ def load_map_data(osm_file_path):
         })
     
     ubidings_with_height = buildings_with_height
-    print(f"Loaded: {len(roads_by_type)} road types, {len(ubidings_with_height)} buildings")
-    print(f"Buildings with height info: {sum(1 for b in ubidings_with_height if b['height'])}")
+    # print(f"Loaded: {len(roads_by_type)} road types, {len(ubidings_with_height)} buildings")
+    # print(f"Buildings with height info: {sum(1 for b in ubidings_with_height if b['height'])}")
     return roads_by_type, ubidings_with_height
 
 

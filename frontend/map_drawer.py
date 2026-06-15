@@ -43,23 +43,23 @@ class OptimizedMapViewer:
             'SHADOW': (0, 0, 0, 30),            # 阴影色
         }
 
-        # 无人机颜色配置 — 高饱和度
+        # 无人机颜色配置 — 低饱和度
         self.DRONE_COLORS = [
-            (180, 57, 70),     # #e63946 红色
-            (69, 123, 157),    # #457b9d 蓝色
-            (42, 157, 143),    # #2a9d8f 青色
-            (244, 162, 97),    # #f4a261 橙色
-            (155, 93, 229),    # #9b5de5 紫色
-            (241, 91, 181),    # #f15bb5 粉色
-            (254, 228, 64),    # #fee440 黄色
-            (0, 187, 249),     # #00bbf9 天蓝
+            (190, 120, 120),   # 红色
+            (120, 150, 170),   # 蓝色
+            (120, 165, 155),   # 青色
+            (215, 175, 140),   # 橙色
+            (170, 140, 195),   # 紫色
+            (210, 150, 180),   # 粉色
+            (220, 210, 140),   # 黄色
+            (120, 180, 210),   # 天蓝
         ]
 
-        # 特殊点颜色
-        self.TASK_SOURCE_COLOR = (254, 228, 64)   # 任务起点 - 明黄方块
-        self.TASK_DEST_COLOR = (241, 91, 181)     # 任务终点 - 粉色菱形
-        self.WAYPOINT_COLOR = (0, 187, 249)       # 绕飞转弯点 - 天蓝三角
-        self.NEXT_TARGET_COLOR = (230, 57, 70)    # 下一个目标 - 红色大圆
+        # 特殊点颜色 — 低饱和度
+        self.TASK_SOURCE_COLOR = (220, 210, 140)   # 任务起点 - 明黄方块
+        self.TASK_DEST_COLOR = (210, 150, 180)     # 任务终点 - 粉色菱形
+        self.WAYPOINT_COLOR = (120, 180, 210)      # 绕飞转弯点 - 天蓝三角
+        self.NEXT_TARGET_COLOR = (190, 120, 120)   # 下一个目标 - 红色大圆
         
         # 视图控制
         self.zoom = 1.0
@@ -76,7 +76,7 @@ class OptimizedMapViewer:
         # self.load_map_data(osm_file_path)
         self.roads_by_type, self.buildings_with_height = load_map_data(osm_file_path)
         
-        print(f"buildings_with_height: {self.buildings_with_height[0]}")
+        # print(f"buildings_with_height: {self.buildings_with_height[0]}")
         
         # 构建空间索引
         self.build_spatial_index()
@@ -89,6 +89,23 @@ class OptimizedMapViewer:
         # 交互状态
         self.hovered_building = None
         self.selected_building = None
+
+        # 右侧面板交互组件
+        self.selected_algorithm = "Greedy"
+        self.algorithm_options = ["Greedy", "PSO", "QMIX", "VDN", "IQL"]
+        self.algo_dropdown_open = False
+        self._add_drone_rect = None
+        self._algo_selector_rect = None
+        self._algo_dropdown_rects: list = []
+        self.on_add_drone = None  # callback, 由外部设置
+
+
+        # 尝试加载系统字体，回退到默认
+        self._init_fonts()
+
+    def set_on_add_drone(self, callback):
+        """设置"添加无人机"按钮的回调函数"""
+        self.on_add_drone = callback
         
         # 尝试加载系统字体，回退到默认
         self._init_fonts()
@@ -127,7 +144,7 @@ class OptimizedMapViewer:
         
         # 加载图片资源
         try:
-            self.charger_image = pygame.image.load('assets/charging_3.png').convert_alpha()
+            self.charger_image = pygame.image.load('assets/charging_4.png').convert_alpha()
         except pygame.error as e:
             print(f"Failed to load charger image: {e}")
             self.charger_image = None
@@ -165,7 +182,7 @@ class OptimizedMapViewer:
         self.map_width = self.max_x - self.min_x
         self.map_height = self.max_y - self.min_y
 
-        print(f"Map bounds: ({self.min_x}, {self.min_y}) to ({self.max_x}, {self.max_y}), size: ({self.map_width}, {self.map_height})")
+        # print(f"Map bounds: ({self.min_x}, {self.min_y}) to ({self.max_x}, {self.max_y}), size: ({self.map_width}, {self.map_height})")
     
     def world_to_screen(self, x, y):
         """坐标转换"""
@@ -371,6 +388,16 @@ class OptimizedMapViewer:
         self.screen.blit(fps, (panel_x + CARD_PAD + 2, y))
         y += 20
 
+        # ===== 交互控件 =====
+        self._draw_controls(panel_x, CARD_PAD, content_w, y)
+        # _draw_controls 的内部 y 递增不可控，手动估算偏移后继续
+        btn_h = 30; gap = 6; sel_h = 30
+        ctrl_total = btn_h + gap + sel_h
+        if self.algo_dropdown_open:
+            opts_count = len(self.algorithm_options) - 1
+            ctrl_total += opts_count * 26
+        y += ctrl_total + 10
+
         # ===== 指标小卡片 =====
         if stats is not None:
             metrics = [
@@ -392,7 +419,7 @@ class OptimizedMapViewer:
         self.screen.blit(drone_label, (panel_x + CARD_PAD + 2, y))
         y += 24
 
-        DRONE_CARD_H = 32  # 每个无人机卡片高度
+        DRONE_CARD_H = 24  # 每个无人机卡片高度
         for drone in drones:
             drone_idx = int(drone.drone_id.split('_')[1]) if '_' in drone.drone_id else 0
             drone_color = self.DRONE_COLORS[drone_idx % len(self.DRONE_COLORS)]
@@ -404,29 +431,14 @@ class OptimizedMapViewer:
             self._draw_nested_card(card_x, y, content_w, DRONE_CARD_H)
 
             # 状态圆点
-            dot_color = (42, 157, 143) if drone.is_free else drone_color
-            pygame.draw.circle(self.screen, dot_color, (card_x + 10, y + 16), 4)
+            dot_color = self.COLORS['TEXT']
+            pygame.draw.circle(self.screen, dot_color, (card_x + 10, y + 12), 4)
 
-            # 名称 + 状态
-            label = self.small_font.render(f"{drone.drone_id}  {status}", True, drone_color)
+            # 名称 + 状态 + 电量百分比
+            label = self.small_font.render(
+                f"{drone.drone_id}  {status}  {battery_pct*100:.0f}%",
+                True, self.COLORS['TEXT'])
             self.screen.blit(label, (card_x + 20, y + 7))
-
-            # 电池条
-            bar_x = card_x + 20
-            bar_w = int((content_w - 40))
-            bar_h = 3
-            bar_y = y + 24
-            pygame.draw.rect(self.screen, (233, 236, 239), (bar_x, bar_y, bar_w, bar_h), border_radius=3)
-            fill_w = max(3, int(bar_w * battery_pct))
-            if battery_pct < 0.2:
-                bc = (230, 57, 70)
-            elif battery_pct < 0.5:
-                bc = (244, 162, 97)
-            else:
-                bc = (42, 157, 143)
-            pygame.draw.rect(self.screen, bc, (bar_x, bar_y, fill_w, bar_h), border_radius=3)
-            # pct = self.small_font.render(f"{battery_pct*100:.0f}%", True, self.COLORS['TEXT_SECONDARY'])
-            # self.screen.blit(pct, (bar_x + bar_w + 4, bar_y - 2))
 
             y += DRONE_CARD_H + 3
 
@@ -457,7 +469,57 @@ class OptimizedMapViewer:
                 self.screen.blit(s, (panel_x + CARD_PAD + 10, y))
                 y += 18
             y += 5
-    
+
+    def _draw_controls(self, panel_x, card_pad, content_w, y):
+        """绘制顶部交互控件：添加无人机按钮 + 算法切换下拉"""
+        cx = panel_x + card_pad  # 控件左边界
+
+        # ---- 添加无人机按钮 ----
+        btn_w = content_w
+        btn_h = 30
+        self._add_drone_rect = pygame.Rect(cx, y, btn_w, btn_h)
+
+        btn_color = (100, 170, 150)
+        hover = self._add_drone_rect.collidepoint(pygame.mouse.get_pos())
+        if hover:
+            btn_color = (80, 150, 130)
+
+        pygame.draw.rect(self.screen, btn_color, self._add_drone_rect, border_radius=6)
+        btn_label = self.small_font.render("+ Add Drone", True, (255, 255, 255))
+        self.screen.blit(btn_label, (cx + (btn_w - btn_label.get_width()) // 2, y + 7))
+        y += btn_h + 6
+
+        # ---- 算法切换下拉 ----
+        sel_h = 30
+        self._algo_selector_rect = pygame.Rect(cx, y, content_w, sel_h)
+
+        # 下拉按钮
+        sel_color = (230, 233, 238)
+        pygame.draw.rect(self.screen, sel_color, self._algo_selector_rect, border_radius=6)
+        pygame.draw.rect(self.screen, self.COLORS['PANEL_BORDER'], self._algo_selector_rect, 1, border_radius=6)
+
+        algo_text = self.small_font.render(f"Algo: {self.selected_algorithm}", True, self.COLORS['TEXT'])
+        self.screen.blit(algo_text, (cx + 8, y + 7))
+        # 下拉箭头
+        arrow = self.small_font.render("▾", True, self.COLORS['TEXT_SECONDARY'])
+        self.screen.blit(arrow, (cx + content_w - 20, y + 7))
+
+        # 下拉列表
+        if self.algo_dropdown_open:
+            opts = [a for a in self.algorithm_options if a != self.selected_algorithm]
+            self._algo_dropdown_rects.clear()
+            for i, opt in enumerate(opts):
+                opt_y = y + sel_h + i * 26
+                opt_rect = pygame.Rect(cx, opt_y, content_w, 26)
+                self._algo_dropdown_rects.append((opt, opt_rect))
+
+                opt_hover = opt_rect.collidepoint(pygame.mouse.get_pos())
+                bg = (210, 215, 220) if opt_hover else (240, 243, 246)
+                pygame.draw.rect(self.screen, bg, opt_rect, border_radius=4)
+                pygame.draw.rect(self.screen, (222, 226, 230), opt_rect, 1, border_radius=4)
+                opt_label = self.small_font.render(opt, True, self.COLORS['TEXT'])
+                self.screen.blit(opt_label, (cx + 8, opt_y + 4))
+
     def handle_events(self):
         """处理事件"""
         for event in pygame.event.get():
@@ -466,14 +528,43 @@ class OptimizedMapViewer:
             
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # 左键
-                    # 检查是否点击了建筑
-                    hover_idx = self.find_hovered_building(event.pos)
-                    if hover_idx is not None:
-                        self.selected_building = hover_idx
+                    ui_handled = False
+
+                    # 1) 下拉列表项点击
+                    if self.algo_dropdown_open:
+                        for opt_name, opt_rect in self._algo_dropdown_rects:
+                            if opt_rect.collidepoint(event.pos):
+                                self.selected_algorithm = opt_name
+                                self.algo_dropdown_open = False
+                                ui_handled = True
+                                break
+
+                    # 2) 算法选择器点击（切换下拉）
+                    if not ui_handled and self._algo_selector_rect is not None:
+                        if self._algo_selector_rect.collidepoint(event.pos):
+                            self.algo_dropdown_open = not self.algo_dropdown_open
+                            ui_handled = True
+
+                    # 3) 添加无人机按钮点击
+                    if not ui_handled and self._add_drone_rect is not None:
+                        if self._add_drone_rect.collidepoint(event.pos):
+                            if self.on_add_drone is not None:
+                                self.on_add_drone()
+                            self.algo_dropdown_open = False
+                            ui_handled = True
+
+                    if ui_handled:
+                        pass  # UI 事件已处理
                     else:
-                        # 开始拖动
-                        self.dragging = True
-                        self.drag_start = event.pos
+                        # 检查是否点击了建筑
+                        hover_idx = self.find_hovered_building(event.pos)
+                        if hover_idx is not None:
+                            self.selected_building = hover_idx
+                        else:
+                            # 开始拖动
+                            self.dragging = True
+                            self.drag_start = event.pos
+                            self.algo_dropdown_open = False  # 点击地图关闭下拉
                 elif event.button == 4:  # 放大
                     # 以鼠标位置为中心缩放
                     mouse_world = self.screen_to_world(event.pos[0], event.pos[1])

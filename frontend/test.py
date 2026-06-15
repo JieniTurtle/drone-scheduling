@@ -7,6 +7,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from environment import Environment
 from backend_si.pso_scheduler import PSOScheduler
 from task_shower import TaskShowerManager
+from greedy.scheduler import GreedyScheduler
 
 
 if __name__ == "__main__":
