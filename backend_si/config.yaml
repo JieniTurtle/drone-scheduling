@@ -1,11 +1,10 @@
 # PSOScheduler 配置文件
-# 修改这里的参数即可调整调度行为，无需改代码
 # 加载入口：backend_si/pso_scheduler.py:PSOScheduler.__init__
 # 调用方法：PSOScheduler(num_drones=N)               -> 用本文件
 #         PSOScheduler(num_drones=N, config_path=…) -> 用其他配置文件
 
 # ---------------------------------------------------------------
-# 随机数种子（用于实验可复现性）
+# 随机数种子
 # ---------------------------------------------------------------
 seed: 0  # 设置为固定值以保证实验可复现；设为 null 则使用随机种子
 
@@ -15,15 +14,20 @@ seed: 0  # 设置为固定值以保证实验可复现；设为 null 则使用随
 dual_channel:
   # 新任务到达时若所有无人机都忙，则进 pending_buffer
   # buffer 中任务数 >= 此阈值时立即触发 PSO 批量分配
-  buffer_size_threshold: 8
+  buffer_size_threshold: 10
 
   # buffer 中任一任务的剩余时间(remaining_time) < 此值时
   # 立即触发 PSO（紧急任务，不等窗口满）
-  emergency_ttl: 100.0
+  emergency_ttl: 80
 
   # buffer 中最早任务停留超过此时间步数时触发 PSO
   # 防止任务来得太慢、buffer 始终不满导致饿死
-  buffer_timeout: 50
+  buffer_timeout: 80
+
+  # 空闲机即时抽取 buffer：每步让"空闲+空队列"的无人机就近抓 buffer 任务（当步派发），
+  # 消除"空闲机干等 flush"的分配延迟。只有竞争（待分配任务 > 空闲机）时才把多余任务
+  # 留给 PSO 批量优化。设 false 退回纯双通道行为（用于 A/B 对比）。
+  eager_idle_dispatch: true
 
 # ---------------------------------------------------------------
 # PSO 算法核心参数（PSOOptimizer 使用）
@@ -43,14 +47,19 @@ pso:
   v_max: 4.0
   # position 偏好分每个分量的绝对值上限（防数值发散）
   pos_max: 5.0
+  # Warm-start（启发式播种）：用批量贪心解作为部分粒子起点 + 初始全局最优，
+  # 加速收敛并保证 PSO 结果不劣于贪心。设为 false 退回纯随机初始化（用于 A/B 对比）
+  warm_start: true
+  # 播种粒子数：1 个精确贪心 + 其余在其邻域加噪；其余粒子保持随机以维持多样性
+  warm_start_seeds: 3
 
 # ---------------------------------------------------------------
 # 适应度函数权重（多目标加权求和；PSO 内部已对每项归一化到 [0,1]）
 # ---------------------------------------------------------------
 fitness_weights:
-  on_time_rate: 0.4   # 准时率
-  avg_delay: 0.4      # 平均时延
-  energy: 0.2         # 能耗
+  on_time_rate: 0.6   # 准时率
+  avg_delay: 0.3      # 平均时延
+  energy: 0.1         # 能耗
 
 # ---------------------------------------------------------------
 # 内层动态贪心评分权重
@@ -61,7 +70,7 @@ dynamic_greedy:
   # 任务优先级权重（priority ∈ [1, 5]，越大越优先）
   priority: 10.0
   # 紧迫度权重（urgency = 1 / max(1, remaining_time)）
-  urgency: 500.0
+  urgency: 1000.0
   # 距离惩罚权重（从无人机当前位置到任务起点的欧氏距离）
   distance: 1.0
 

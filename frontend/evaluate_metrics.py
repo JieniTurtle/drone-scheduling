@@ -89,46 +89,73 @@ def run_one_episode(osm_path, episode_steps, policy):
             action = scheduler.step(obs, current_time=env.current_time)
         obs, _, done, _ = env.step(action)
 
-    return env.get_statistics()
+    stats = env.get_statistics()
+    return {
+        "episode_step": int(env.current_time),
+        "completion_rate": float(stats.get("completion_rate", 0.0)),
+        "on_time_rate": float(stats.get("on_time_rate", 0.0)),
+        "avg_delay": float(stats.get("avg_delay", 0.0)),
+        "avg_wait_time_to_load": float(stats.get("avg_wait_time_to_load", 0.0)),
+        "avg_delivery_time": float(stats.get("avg_delivery_time", 0.0)),
+        "avg_generation_to_completion_time": float(stats.get("avg_generation_to_completion_time", 0.0)),
+        "avg_generation_time": float(stats.get("avg_generation_time", 0.0)),
+        "avg_steps_per_order": float(stats.get("avg_steps_per_order", 0.0)),
+        "total_completed": int(stats.get("total_completed", 0)),
+        "total_generated": int(stats.get("total_generated", getattr(env, "total_generated_tasks", 0))),
+        "total_energy_consumed": float(stats.get("total_energy_consumed", 0.0)),
+        "max_delivery_time": float(stats.get("max_delivery_time", 0.0)),
+    }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate frontend environment metrics.")
     parser.add_argument("--policy", type=str, default="greedy", choices=["greedy", "pso"], help="Policy type for evaluation.")
     parser.add_argument("--episodes", type=int, default=5, help="Number of evaluation episodes.")
-    parser.add_argument("--episode-steps", type=int, default=1200, help="Max steps per episode.")
+    parser.add_argument("--episode-steps", type=int, default=None, help="Max steps per episode.")
     parser.add_argument("--osm", type=str, default="data/map/part_of_yangpu.osm", help="Relative path to OSM map file.")
     args = parser.parse_args()
+
+    episode_steps = args.episode_steps or 1200
 
     all_stats = []
     metrics_path = _get_metrics_output(args.policy)
     source = "frontend_greedy" if args.policy == "greedy" else "backend_si"
     for ep in range(args.episodes):
-        stats = run_one_episode(args.osm, args.episode_steps, args.policy)
+        stats = run_one_episode(args.osm, episode_steps, args.policy)
         all_stats.append(stats)
         _write_metrics_row(metrics_path, source, ep + 1, stats)
         print(
-            f"Episode {ep + 1}: completion_rate={stats['completion_rate']:.4f}, "
-            f"on_time_rate={stats['on_time_rate']:.4f}, avg_delay={stats['avg_delay']:.4f}, "
-            f"avg_wait={stats.get('avg_wait_time_to_load', 0.0):.4f}, "
-            f"avg_generation_time={stats.get('avg_generation_time', 0.0):.4f}"
+            f"Episode {ep + 1}: "
+            f"completion={stats['completion_rate']:.4f}, "
+            f"on_time={stats['on_time_rate']:.4f}, "
+            f"avg_delay={stats['avg_delay']:.4f}, "
+            f"avg_wait={stats['avg_wait_time_to_load']:.4f}, "
+            f"avg_delivery={stats['avg_delivery_time']:.4f}, "
+            f"avg_gen_to_done={stats['avg_generation_to_completion_time']:.4f}, "
+            f"completed={stats['total_completed']}/{stats['total_generated']}, "
+            f"avg_gen_time={stats['avg_generation_time']:.4f}, "
+            f"steps={stats['episode_step']}"
         )
 
     n = max(len(all_stats), 1)
     mean_completion = sum(s["completion_rate"] for s in all_stats) / n
     mean_on_time = sum(s["on_time_rate"] for s in all_stats) / n
     mean_avg_delay = sum(s["avg_delay"] for s in all_stats) / n
-    mean_avg_wait = sum(s.get("avg_wait_time_to_load", 0.0) for s in all_stats) / n
-    mean_avg_generation_time = sum(s.get("avg_generation_time", 0.0) for s in all_stats) / n
+    mean_avg_wait = sum(s["avg_wait_time_to_load"] for s in all_stats) / n
+    mean_avg_delivery = sum(s["avg_delivery_time"] for s in all_stats) / n
+    mean_gen_to_done = sum(s["avg_generation_to_completion_time"] for s in all_stats) / n
+    mean_avg_gen_time = sum(s["avg_generation_time"] for s in all_stats) / n
 
     print("=" * 60)
     print("Mean Metrics")
-    print(f"completion_rate: {mean_completion:.4f}")
-    print(f"on_time_rate:    {mean_on_time:.4f}")
-    print(f"avg_delay:       {mean_avg_delay:.4f}")
-    print(f"avg_wait:        {mean_avg_wait:.4f}")
-    print(f"avg_generation:  {mean_avg_generation_time:.4f}")
-    print(f"metrics_file:    {metrics_path}")
+    print(f"completion_rate:       {mean_completion:.4f}")
+    print(f"on_time_rate:          {mean_on_time:.4f}")
+    print(f"avg_delay:             {mean_avg_delay:.4f}")
+    print(f"avg_wait_time_to_load: {mean_avg_wait:.4f}")
+    print(f"avg_delivery_time:     {mean_avg_delivery:.4f}")
+    print(f"avg_gen_to_done:       {mean_gen_to_done:.4f}")
+    print(f"avg_generation_time:   {mean_avg_gen_time:.4f}")
+    print(f"metrics_file:          {metrics_path}")
     print("=" * 60)
 
 
